@@ -21,7 +21,7 @@
 static int plane_id = 0;
 
 // a point to plane matching structure
-typedef struct ptpl {
+typedef struct point_to_plane {
   Eigen::Vector3d point;
   Eigen::Vector3d point_world;
   Eigen::Vector3d normal;
@@ -30,7 +30,7 @@ typedef struct ptpl {
   double d;
   int layer;
   Eigen::Matrix3d cov_lidar;
-} ptpl;
+} point_to_plane;
 
 // 3D point with covariance
 typedef struct pointWithCov {
@@ -679,7 +679,7 @@ void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
 void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
                            const int current_layer, const int max_layer,
                            const double sigma_num, bool &is_sucess,
-                           double &prob, ptpl &single_ptpl) {
+                           double &prob, point_to_plane &single_point_to_plane ) {
   double radius_k = 3;
   Eigen::Vector3d p_w = pv.point_world;
   // 如果当前voxel是平面 则构建voxel block 否则递归搜索当前voxel的leaves 直到找到平面
@@ -717,14 +717,14 @@ void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
         // 在递归的过程中不断比较 最后保留一个最大概率PDF对应的residual
         if (this_prob > prob) {
           prob = this_prob;
-          single_ptpl.point = pv.point;
-          single_ptpl.point_world = pv.point_world;
-          single_ptpl.plane_cov = plane.plane_cov;
-          single_ptpl.normal = plane.normal;
-          single_ptpl.center = plane.center;
-          single_ptpl.d = plane.d;
-          single_ptpl.layer = current_layer;
-          single_ptpl.cov_lidar = pv.cov_lidar;
+          single_point_to_plane.point = pv.point;
+          single_point_to_plane.point_world = pv.point_world;
+          single_point_to_plane.plane_cov = plane.plane_cov;
+          single_point_to_plane.normal = plane.normal;
+          single_point_to_plane.center = plane.center;
+          single_point_to_plane.d = plane.d;
+          single_point_to_plane.layer = current_layer;
+          single_point_to_plane.cov_lidar = pv.cov_lidar;
         }
         return;
       } else {
@@ -743,7 +743,7 @@ void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
 
           OctoTree *leaf_octo = current_octo->leaves_[leafnum];
           build_single_residual(pv, leaf_octo, current_layer + 1, max_layer,
-                                sigma_num, is_sucess, prob, single_ptpl);
+                                sigma_num, is_sucess, prob, single_point_to_plane);
         }
       }
       return;
@@ -865,16 +865,16 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
                           const double voxel_size, const double sigma_num,
                           const int max_layer,
                           const std::vector<pointWithCov> &pv_list,
-                          std::vector<ptpl> &ptpl_list,
+                          std::vector<point_to_plane> &point_to_plane_list,
                           std::vector<Eigen::Vector3d> &non_match) {
   std::mutex mylock;
-  ptpl_list.clear();
-  std::vector<ptpl> all_ptpl_list(pv_list.size());
-  std::vector<bool> useful_ptpl(pv_list.size());
+  point_to_plane_list.clear();
+  std::vector<point_to_plane> all_point_to_plane_list(pv_list.size());
+  std::vector<bool> useful_point_to_plane(pv_list.size());
   std::vector<size_t> index(pv_list.size());
   for (size_t i = 0; i < index.size(); ++i) {
     index[i] = i;
-    useful_ptpl[i] = false;
+    useful_point_to_plane[i] = false;
   }
 #ifdef MP_EN
   omp_set_num_threads(MP_PROC_NUM);
@@ -897,12 +897,12 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
 
     if (iter != voxel_map.end()) {
       OctoTree *current_octo = iter->second;
-      ptpl single_ptpl;
+      point_to_plane single_point_to_plane;
       bool is_sucess = false;
       double prob = 0;
-      // 找到之后构建residual 返回值是single_ptpl 包含了与点匹配的平面的所有信息
+      // 找到之后构建residual 返回值是single_point_to_plane 包含了与点匹配的平面的所有信息
       build_single_residual(pv, current_octo, 0, max_layer, sigma_num,
-                            is_sucess, prob, single_ptpl);
+                            is_sucess, prob, single_point_to_plane);
       // 如果不成功 根据当前点偏离voxel的程度 查找临近的voxel
       // HACK 这里是为了处理点落在两个voxel边界的情况 可能真实匹配的平面在临近的voxel中
       if (!is_sucess) {
@@ -931,7 +931,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
         auto iter_near = voxel_map.find(near_position);
         if (iter_near != voxel_map.end()) {
           build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num,
-                                is_sucess, prob, single_ptpl);
+                                is_sucess, prob, single_point_to_plane);
         }
       }
 
@@ -939,19 +939,19 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
       if (is_sucess) {
 
         mylock.lock();
-        useful_ptpl[i] = true;
-        all_ptpl_list[i] = single_ptpl;
+        useful_point_to_plane[i] = true;
+        all_point_to_plane_list[i] = single_point_to_plane;
         mylock.unlock();
       } else {
         mylock.lock();
-        useful_ptpl[i] = false;
+        useful_point_to_plane[i] = false;
         mylock.unlock();
       }
     }
   }
-  for (size_t i = 0; i < useful_ptpl.size(); i++) {
-    if (useful_ptpl[i]) {
-      ptpl_list.push_back(all_ptpl_list[i]);
+  for (size_t i = 0; i < useful_point_to_plane.size(); i++) {
+    if (useful_point_to_plane[i]) {
+      point_to_plane_list.push_back(all_point_to_plane_list[i]);
     }
   }
 }
@@ -959,9 +959,9 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
 void BuildResidualListNormal(
     const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
     const double voxel_size, const double sigma_num, const int max_layer,
-    const std::vector<pointWithCov> &pv_list, std::vector<ptpl> &ptpl_list,
+    const std::vector<pointWithCov> &pv_list, std::vector<point_to_plane> &point_to_plane_list,
     std::vector<Eigen::Vector3d> &non_match) {
-  ptpl_list.clear();
+  point_to_plane_list.clear();
   std::vector<size_t> index(pv_list.size());
   for (size_t i = 0; i < pv_list.size(); ++i) {
     pointWithCov pv = pv_list[i];
@@ -977,11 +977,11 @@ void BuildResidualListNormal(
     auto iter = voxel_map.find(position);
     if (iter != voxel_map.end()) {
       OctoTree *current_octo = iter->second;
-      ptpl single_ptpl;
+      point_to_plane single_point_to_plane;
       bool is_sucess = false;
       double prob = 0;
       build_single_residual(pv, current_octo, 0, max_layer, sigma_num,
-                            is_sucess, prob, single_ptpl);
+                            is_sucess, prob, single_point_to_plane);
 
       if (!is_sucess) {
         VOXEL_LOC near_position = position;
@@ -1009,11 +1009,11 @@ void BuildResidualListNormal(
         auto iter_near = voxel_map.find(near_position);
         if (iter_near != voxel_map.end()) {
           build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num,
-                                is_sucess, prob, single_ptpl);
+                                is_sucess, prob, single_point_to_plane);
         }
       }
       if (is_sucess) {
-        ptpl_list.push_back(single_ptpl);
+        point_to_plane_list.push_back(single_point_to_plane);
       } else {
         non_match.push_back(pv.point_world);
       }
