@@ -245,66 +245,88 @@ public:
     }
   }
 
-  // only updaye plane normal, center and radius with new points
+  // only update plane normal, center and radius with new points
   void update_plane(const std::vector<pointWithCov> &points, Plane *plane) {
+  
     Eigen::Matrix3d old_covariance = plane->covariance;
     Eigen::Vector3d old_center = plane->center;
-    Eigen::Matrix3d sum_ppt =
-        (plane->covariance + plane->center * plane->center.transpose()) *
-        plane->points_size;
+    
+    Eigen::Matrix3d sum_ppt = (plane->covariance + plane->center * plane->center.transpose()) * plane->points_size;
+        
     Eigen::Vector3d sum_p = plane->center * plane->points_size;
+    
     for (size_t i = 0; i < points.size(); i++) {
+    
       Eigen::Vector3d pv = points[i].point;
       sum_ppt += pv * pv.transpose();
       sum_p += pv;
+      
     }
+    
     plane->points_size = plane->points_size + points.size();
     plane->center = sum_p / plane->points_size;
-    plane->covariance = sum_ppt / plane->points_size -
-                        plane->center * plane->center.transpose();
+    plane->covariance = sum_ppt / plane->points_size - plane->center * plane->center.transpose();
+    
+    
     Eigen::EigenSolver<Eigen::Matrix3d> es(plane->covariance);
+    
     Eigen::Matrix3cd evecs = es.eigenvectors();
     Eigen::Vector3cd evals = es.eigenvalues();
     Eigen::Vector3d evalsReal;
+    
     evalsReal = evals.real();
+    
     Eigen::Matrix3d::Index evalsMin, evalsMax;
+    
     evalsReal.rowwise().sum().minCoeff(&evalsMin);
     evalsReal.rowwise().sum().maxCoeff(&evalsMax);
+    
     int evalsMid = 3 - evalsMin - evalsMax;
+    
     Eigen::Vector3d evecMin = evecs.real().col(evalsMin);
     Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
     Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
+    
     if (evalsReal(evalsMin) < planer_threshold_) {
+    
       plane->normal << evecs.real()(0, evalsMin), evecs.real()(1, evalsMin),
           evecs.real()(2, evalsMin);
       plane->y_normal << evecs.real()(0, evalsMid), evecs.real()(1, evalsMid),
           evecs.real()(2, evalsMid);
       plane->x_normal << evecs.real()(0, evalsMax), evecs.real()(1, evalsMax),
           evecs.real()(2, evalsMax);
+          
       plane->min_eigen_value = evalsReal(evalsMin);
       plane->mid_eigen_value = evalsReal(evalsMid);
       plane->max_eigen_value = evalsReal(evalsMax);
       plane->radius = sqrt(evalsReal(evalsMax));
+      
       plane->d = -(plane->normal(0) * plane->center(0) +
                    plane->normal(1) * plane->center(1) +
                    plane->normal(2) * plane->center(2));
 
       plane->is_plane = true;
       plane->is_update = true;
+      
     } else {
+    
       plane->normal << evecs.real()(0, evalsMin), evecs.real()(1, evalsMin),
           evecs.real()(2, evalsMin);
       plane->y_normal << evecs.real()(0, evalsMid), evecs.real()(1, evalsMid),
           evecs.real()(2, evalsMid);
       plane->x_normal << evecs.real()(0, evalsMax), evecs.real()(1, evalsMax),
           evecs.real()(2, evalsMax);
+          
       plane->min_eigen_value = evalsReal(evalsMin);
       plane->mid_eigen_value = evalsReal(evalsMid);
       plane->max_eigen_value = evalsReal(evalsMax);
+      
       plane->radius = sqrt(evalsReal(evalsMax));
+      
       plane->d = -(plane->normal(0) * plane->center(0) +
                    plane->normal(1) * plane->center(1) +
                    plane->normal(2) * plane->center(2));
+                   
       plane->is_plane = false;
       plane->is_update = true;
     }
@@ -382,102 +404,161 @@ public:
   }
 
   void UpdateOctoTree(const pointWithCov &pv) {
+  
     if (!init_octo_) {
+    
       new_points_num_++;
       all_points_num_++;
       temp_points_.push_back(pv);
+      
       if (temp_points_.size() > max_plane_update_threshold_) {
         init_octo_tree();
       }
+      
     } else {
+    
       if (plane_ptr_->is_plane) {
+      
         if (update_enable_) {
+        
           new_points_num_++;
           all_points_num_++;
+          
           if (update_cov_enable_) {
+          
             temp_points_.push_back(pv);
+            
           } else {
+          
             new_points_.push_back(pv);
+            
           }
+          
           if (new_points_num_ > update_size_threshold_) {
+          
             if (update_cov_enable_) {
               init_plane(temp_points_, plane_ptr_);
             }
             new_points_num_ = 0;
+            
           }
           if (all_points_num_ >= max_cov_points_size_) {
+          
             update_cov_enable_ = false;
             std::vector<pointWithCov>().swap(temp_points_);
+            
           }
           if (all_points_num_ >= max_points_size_) {
+          
             update_enable_ = false;
             plane_ptr_->update_enable = false;
             std::vector<pointWithCov>().swap(new_points_);
+            
           }
+          
         } else {
           return;
         }
+        
       } else {
+      
         if (layer_ < max_layer_) {
+        
           if (temp_points_.size() != 0) {
             std::vector<pointWithCov>().swap(temp_points_);
           }
+          
           if (new_points_.size() != 0) {
             std::vector<pointWithCov>().swap(new_points_);
           }
+          
           int xyz[3] = {0, 0, 0};
+          
           if (pv.point[0] > voxel_center_[0]) {
             xyz[0] = 1;
           }
+          
           if (pv.point[1] > voxel_center_[1]) {
             xyz[1] = 1;
           }
+          
           if (pv.point[2] > voxel_center_[2]) {
             xyz[2] = 1;
           }
+          
           int leafnum = 4 * xyz[0] + 2 * xyz[1] + xyz[2];
+          
           if (leaves_[leafnum] != nullptr) {
+          
             leaves_[leafnum]->UpdateOctoTree(pv);
+            
           } else {
+          
             leaves_[leafnum] = new OctoTree(
                 max_layer_, layer_ + 1, layer_point_size_, max_points_size_,
                 max_cov_points_size_, planer_threshold_);
+                
             leaves_[leafnum]->layer_point_size_ = layer_point_size_;
+            
             leaves_[leafnum]->voxel_center_[0] =
                 voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
             leaves_[leafnum]->voxel_center_[1] =
                 voxel_center_[1] + (2 * xyz[1] - 1) * quater_length_;
             leaves_[leafnum]->voxel_center_[2] =
                 voxel_center_[2] + (2 * xyz[2] - 1) * quater_length_;
+                
             leaves_[leafnum]->quater_length_ = quater_length_ / 2;
+            
             leaves_[leafnum]->UpdateOctoTree(pv);
+            
           }
         } else {
+        
           if (update_enable_) {
+          
             new_points_num_++;
             all_points_num_++;
+            
             if (update_cov_enable_) {
+            
               temp_points_.push_back(pv);
+              
             } else {
+            
               new_points_.push_back(pv);
+              
             }
+            
             if (new_points_num_ > update_size_threshold_) {
+            
               if (update_cov_enable_) {
+              
                 init_plane(temp_points_, plane_ptr_);
+                
               } else {
+              
                 update_plane(new_points_, plane_ptr_);
                 new_points_.clear();
+                
               }
+              
               new_points_num_ = 0;
+              
             }
+            
             if (all_points_num_ >= max_cov_points_size_) {
+            
               update_cov_enable_ = false;
               std::vector<pointWithCov>().swap(temp_points_);
+              
             }
+            
             if (all_points_num_ >= max_points_size_) {
+            
               update_enable_ = false;
               plane_ptr_->update_enable = false;
               std::vector<pointWithCov>().swap(new_points_);
+              
             }
           }
         }
@@ -534,6 +615,7 @@ void buildVoxelMap(const std::vector<pointWithCov> &input_points,
                    const int max_points_size, const int max_cov_points_size,
                    const float planer_threshold,
                    std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map) {
+                   
   uint plsize = input_points.size();
   for (uint i = 0; i < plsize; i++) {
     const pointWithCov p_v = input_points[i];
@@ -680,40 +762,54 @@ void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
                            const int current_layer, const int max_layer,
                            const double sigma_num, bool &is_sucess,
                            double &prob, point_to_plane &single_point_to_plane ) {
+  
+  // radius k = 3                         
   double radius_k = 3;
-  Eigen::Vector3d p_w = pv.point_world;
+  
+  // get point in the word
+  Eigen::Vector3d point_world = pv.point_world;
   // 如果当前voxel是平面 则构建voxel block 否则递归搜索当前voxel的leaves 直到找到平面
   // XXX 如果不是平面是不是可以在构建的时候直接剪掉？
+  // if right now level of octo is a plane
   if (current_octo->plane_ptr_->is_plane) {
+  
+    // get the plane 
     Plane &plane = *current_octo->plane_ptr_;
+    
     // HACK 这个是LiDAR点到地图plane的点面距离
-    float dis_to_plane =
-        fabs(plane.normal(0) * p_w(0) + plane.normal(1) * p_w(1) +
-             plane.normal(2) * p_w(2) + plane.d);
+    // get point_world to the plane
+    float dis_to_plane = fabs(plane.normal(0) * point_world(0) + plane.normal(1) * point_world(1) + plane.normal(2) * point_world(2) + plane.d);
+    
     // HACK 这个是LiDAR点到构建地图plane的点簇中心的距离
-    float dis_to_center =
-        (plane.center(0) - p_w(0)) * (plane.center(0) - p_w(0)) +
-        (plane.center(1) - p_w(1)) * (plane.center(1) - p_w(1)) +
-        (plane.center(2) - p_w(2)) * (plane.center(2) - p_w(2));
+    float dis_to_center = (plane.center(0) - point_world(0)) * (plane.center(0) - point_world(0)) + (plane.center(1) - point_world(1)) * (plane.center(1) - point_world(1)) + (plane.center(2) - point_world(2)) * (plane.center(2) - point_world(2));
+    
     // HACK 差值是 点在平面上投影 与 平面点簇中心的距离
     // HACK 目的是不要用距离平面点簇太远的点来做残差，因为估计的平面在这些远点的位置可能不满足平面假设了
     // HACK 因为将点划分进voxel的时候只用了第一层voxel 这个voxel可能比较大 遍历到的这个子voxel距离点可能还比较远
+    
+    // distance of center of plane to the projection point
     float range_dis = sqrt(dis_to_center - dis_to_plane * dis_to_plane);
 
+    // if the above distance is smaller than the 3 * plane.radius
     if (range_dis <= radius_k * plane.radius) {
+      
       // 计算点面距离的方差
+      // get the jacobian [n,q]
+      // [ (T*p - q).transpose(), -n.transpose(), n..transpose()*Rk]
       Eigen::Matrix<double, 1, 6> J_nq;
-      J_nq.block<1, 3>(0, 0) = p_w - plane.center;
+      J_nq.block<1, 3>(0, 0) = point_world - plane.center;
       J_nq.block<1, 3>(0, 3) = -plane.normal;
+      
       double sigma_l = J_nq * plane.plane_cov * J_nq.transpose();
       sigma_l += plane.normal.transpose() * pv.cov * plane.normal;
+      
       // 只选择距离在3sigma之内的匹配
       if (dis_to_plane < sigma_num * sqrt(sigma_l)) {
+        
         is_sucess = true;
         // 求对应正态分布的概率密度值 意思是落在当前平面有多大可能性 注意这个分布的u=0 所以直接用dis_to_plane平方来求
         // HACK 这里比fast lio和任何loam系的都要clever得多
-        double this_prob = 1.0 / (sqrt(sigma_l)) *
-                           exp(-0.5 * dis_to_plane * dis_to_plane / sigma_l);
+        double this_prob = 1.0 / (sqrt(sigma_l)) * exp(-0.5 * dis_to_plane * dis_to_plane / sigma_l);
         // 在递归的过程中不断比较 最后保留一个最大概率PDF对应的residual
         if (this_prob > prob) {
           prob = this_prob;
@@ -861,78 +957,127 @@ void GetUpdatePlane(const OctoTree *current_octo, const int pub_max_voxel_layer,
 //   }
 // }
 
+//BuildResidualListOMP(voxel_map, max_voxel_size, 3.0, max_layer, pv_list, point_to_plane_list, non_match_list);
+    
 void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
                           const double voxel_size, const double sigma_num,
                           const int max_layer,
                           const std::vector<pointWithCov> &pv_list,
                           std::vector<point_to_plane> &point_to_plane_list,
                           std::vector<Eigen::Vector3d> &non_match) {
+                          
+  // lock the function                        
   std::mutex mylock;
+  
+  // clean the point_to_plane_list
   point_to_plane_list.clear();
+  
+  // all point_to_plane, useful_point_to_plane, index
   std::vector<point_to_plane> all_point_to_plane_list(pv_list.size());
   std::vector<bool> useful_point_to_plane(pv_list.size());
   std::vector<size_t> index(pv_list.size());
+  
+  // initial them to 0
   for (size_t i = 0; i < index.size(); ++i) {
     index[i] = i;
     useful_point_to_plane[i] = false;
   }
+  
 #ifdef MP_EN
   omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
 #endif
+
+  
   // 这个文章在实现的时候 第一层voxel并没有严格作为根节点，而是现有一个层次的结构，这样方便管理
   for (int i = 0; i < index.size(); i++) {
+  
+    // the point with covariance
     pointWithCov pv = pv_list[i];
+    
+    // location of x, y, z
     float loc_xyz[3];
+    
     for (int j = 0; j < 3; j++) {
+      
+      // world position x = 100 / 1 = 100 index of voxel
       loc_xyz[j] = pv.point_world[j] / voxel_size;
+      
+      // if the install is < 0, then -1 voxel
       if (loc_xyz[j] < 0) {
         loc_xyz[j] -= 1.0;
       }
+      
+      
     }
-    VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1],
-                       (int64_t)loc_xyz[2]);
+    
+    // make the position by loc_xyz[0], loc_xyz[1], loc_xyz[2] of present point pv
+    VOXEL_LOC position( (int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2] );
+                       
     // 查找当前点所属的voxel
     auto iter = voxel_map.find(position);
 
     if (iter != voxel_map.end()) {
+      
+      // get the present octo
       OctoTree *current_octo = iter->second;
       point_to_plane single_point_to_plane;
+      
       bool is_sucess = false;
       double prob = 0;
+      
       // 找到之后构建residual 返回值是single_point_to_plane 包含了与点匹配的平面的所有信息
-      build_single_residual(pv, current_octo, 0, max_layer, sigma_num,
-                            is_sucess, prob, single_point_to_plane);
+      build_single_residual( pv, current_octo, 0, max_layer, sigma_num, is_sucess, prob, single_point_to_plane );
+      
       // 如果不成功 根据当前点偏离voxel的程度 查找临近的voxel
       // HACK 这里是为了处理点落在两个voxel边界的情况 可能真实匹配的平面在临近的voxel中
       if (!is_sucess) {
+      
+        // get the position
         VOXEL_LOC near_position = position;
-        if (loc_xyz[0] >
-            (current_octo->voxel_center_[0] + current_octo->quater_length_)) {
+
+        // if bigger than the boundary
+        if (loc_xyz[0] > (current_octo->voxel_center_[0] + current_octo->quater_length_) ) 
+        {
+          // move the x to right +1
           near_position.x = near_position.x + 1;
-        } else if (loc_xyz[0] < (current_octo->voxel_center_[0] -
-                                 current_octo->quater_length_)) {
+        } 
+        else if (loc_xyz[0] < (current_octo->voxel_center_[0] - current_octo->quater_length_)) 
+        {  
+          // move the x to left -1
           near_position.x = near_position.x - 1;
         }
-        if (loc_xyz[1] >
-            (current_octo->voxel_center_[1] + current_octo->quater_length_)) {
+        
+        if (loc_xyz[1] > (current_octo->voxel_center_[1] + current_octo->quater_length_)) 
+        {
+          // move the y to up +1
           near_position.y = near_position.y + 1;
-        } else if (loc_xyz[1] < (current_octo->voxel_center_[1] -
-                                 current_octo->quater_length_)) {
+        } 
+        else if (loc_xyz[1] < (current_octo->voxel_center_[1] - current_octo->quater_length_)) 
+        {
+          // move the y to down -1
           near_position.y = near_position.y - 1;
         }
-        if (loc_xyz[2] >
-            (current_octo->voxel_center_[2] + current_octo->quater_length_)) {
+        
+        if (loc_xyz[2] > (current_octo->voxel_center_[2] + current_octo->quater_length_)) 
+        { 
+          // move the z to forward +1
           near_position.z = near_position.z + 1;
-        } else if (loc_xyz[2] < (current_octo->voxel_center_[2] -
-                                 current_octo->quater_length_)) {
+        } 
+        else if (loc_xyz[2] < (current_octo->voxel_center_[2] - current_octo->quater_length_)) 
+        {
+          // move the z to backward -1
           near_position.z = near_position.z - 1;
         }
+        
         auto iter_near = voxel_map.find(near_position);
-        if (iter_near != voxel_map.end()) {
-          build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num,
-                                is_sucess, prob, single_point_to_plane);
+        
+        // build a single residual
+        if (iter_near != voxel_map.end()) 
+        {
+          build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num, is_sucess, prob, single_point_to_plane);
         }
+        
       }
 
       // 所有点的匹配结果储存到list中
@@ -949,6 +1094,8 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
       }
     }
   }
+  
+  // get all the point of useful to the list
   for (size_t i = 0; i < useful_point_to_plane.size(); i++) {
     if (useful_point_to_plane[i]) {
       point_to_plane_list.push_back(all_point_to_plane_list[i]);
@@ -1307,29 +1454,43 @@ void pubPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
   //      << "total size: " << feat_map.size() << endl;
 }
 
-M3D calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc)
+M3D calcualte_body_covariance_lidar_frame(Eigen::Vector3d &pb, const float range_inc, const float degree_inc)
 {
+
+  // the distance of the point to the center of lidar
   float range = sqrt(pb[0] * pb[0] + pb[1] * pb[1] + pb[2] * pb[2]);
+  
+  // ranging_cov, distance covariance
   float range_var = range_inc * range_inc;
+  // 2x2 matrix of direction
   Eigen::Matrix2d direction_var;
-  direction_var << pow(sin(DEG2RAD(degree_inc)), 2), 0, 0,
-      pow(sin(DEG2RAD(degree_inc)), 2);
+  direction_var << pow(sin(DEG2RAD(degree_inc)), 2), 0, 0, pow(sin(DEG2RAD(degree_inc)), 2);
+  
+  // direction of 3d
   Eigen::Vector3d direction(pb);
   direction.normalize();
+  
+  // direction^
   Eigen::Matrix3d direction_hat;
-  direction_hat << 0, -direction(2), direction(1), direction(2), 0,
-      -direction(0), -direction(1), direction(0), 0;
-  Eigen::Vector3d base_vector1(1, 1,
-                               -(direction(0) + direction(1)) / direction(2));
+  direction_hat << 0, -direction(2), direction(1), direction(2), 0, -direction(0), -direction(1), direction(0), 0;
+  
+  //3d vector
+  Eigen::Vector3d base_vector1(1, 1, -(direction(0) + direction(1)) / direction(2));
   base_vector1.normalize();
+  
+  // vertical axis of base_vector1, base_vector2, direction
   Eigen::Vector3d base_vector2 = base_vector1.cross(direction);
   base_vector2.normalize();
+  
+  //3x2 matrix
   Eigen::Matrix<double, 3, 2> N;
-  N << base_vector1(0), base_vector2(0), base_vector1(1), base_vector2(1),
-      base_vector1(2), base_vector2(2);
+  N << base_vector1(0), base_vector2(0), base_vector1(1), base_vector2(1), base_vector1(2), base_vector2(2);
+  
+  // the covariance 
   Eigen::Matrix<double, 3, 2> A = range * direction_hat * N;
-  return direction * range_var * direction.transpose() +
-        A * direction_var * A.transpose();
+  
+  // calculate the point covariance of the lidar frame
+  return direction * range_var * direction.transpose() +  A * direction_var * A.transpose();
 };
 
 #endif

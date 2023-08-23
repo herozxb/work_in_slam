@@ -63,6 +63,7 @@ using namespace Eigen;
 //for the aim to calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
 //applied for measurement as a manifold.
 template<typename S, typename M, int measurement_noise_dof = M::DOF>
+
 struct share_datastruct
 {
 	bool valid;

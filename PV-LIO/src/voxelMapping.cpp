@@ -602,12 +602,14 @@ M3D transformLiDARCovarianceToWorldCovariance(Eigen::Vector3d &p_lidar, const es
     M3D il_rot_var = kf.get_P().block<3, 3>(6, 6);
     M3D il_t_var = kf.get_P().block<3, 3>(9, 9);
 
+    // lidar to imu
     M3D COV_body =
             state.offset_R_L_I * COV_lidar * state.offset_R_L_I.conjugate()
             + state.offset_R_L_I * (-point_crossmat) * il_rot_var * (-point_crossmat).transpose() * state.offset_R_L_I.conjugate()
             + il_t_var;
 
     // body的坐标
+    // p_lidar to p_body ( p_imu )
     V3D p_body = state.offset_R_L_I * p_lidar + state.offset_T_L_I;
 
     // body到world的方差传播
@@ -633,29 +635,47 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
 {
 //    laserCloudOri->clear();
 //    corr_normvect->clear();
+
     feats_with_correspondence->clear();
     total_residual = 0.0;
 
     // =================================================================================================================
     // 用当前迭代轮最新的位姿估计值 将点云转换到world地图系
+
+    // point with covariance array
     vector<pointWithCov> pv_list;
+    // world lidar point
     PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI);
     // FIXME stupid mistake 这里应该用迭代的最新线性化点
     // FIXME stupid mistake 这里应该用迭代的最新线性化点
-//    transformLidar(state_point, feature_down_sample_body, world_lidar);
+    // transformLidar(state_point, feature_down_sample_body, world_lidar);
+
+    // transform the feature_down_sample_body to lidar point in the world
     transformLidar(s, feature_down_sample_body, world_lidar);
     pv_list.resize(feature_down_sample_body->size());
+    
+    // all the point in the feature_down_sample_body
     for (size_t i = 0; i < feature_down_sample_body->size(); i++) {
+    
+        
         // 保存body系和world系坐标
         pointWithCov pv;
+        
+        // point in the lidar
         pv.point << feature_down_sample_body->points[i].x, feature_down_sample_body->points[i].y, feature_down_sample_body->points[i].z;
+        // point in the world
         pv.point_world << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
         // 计算lidar点的cov
         // 注意这个在每次迭代时是存在重复计算的 因为lidar系的点云covariance是不变的
-        // M3D cov_lidar = calcBodyCov(pv.point, ranging_cov, angle_cov);
+        // M3D cov_lidar = calcualte_body_covariance_lidar_frame(pv.point, ranging_cov, angle_cov);
+        
+        // lidar point variance
         M3D cov_lidar = variance_down_sample_body[i];
+        
         // 将body系的var转换到world系
+        // transform the lidar covariance to world covariance of the point
         M3D cov_world = transformLiDARCovarianceToWorldCovariance(pv.point, kf, cov_lidar);
+        
         pv.cov = cov_world;
         pv.cov_lidar = cov_lidar;
         pv_list[i] = pv;
@@ -665,10 +685,16 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
     // 查找最近点 并构建residual
     double match_start = omp_get_wtime();
     //point to plane list
+    
+    // point_to_plane
     std::vector<point_to_plane> point_to_plane_list;
+    // no match point
     std::vector<V3D> non_match_list;
-    BuildResidualListOMP(voxel_map, max_voxel_size, 3.0, max_layer, pv_list,
-                         point_to_plane_list, non_match_list);
+    
+    // get the distance of point to plane
+    BuildResidualListOMP(voxel_map, max_voxel_size, 3.0, max_layer, pv_list, point_to_plane_list, non_match_list);
+    
+    
     double match_end = omp_get_wtime();
     // std::printf("Match Time: %f\n", match_end - match_start);
 
@@ -676,11 +702,15 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
     // 根据匹配结果 设置H和R的维度
     // h_x是观测值对状态量的导数 TODO 为什么不加上状态量对状态量误差的导数？？？？像quaternion那本书？
     effct_feat_num = point_to_plane_list.size();
+    
     if (effct_feat_num < 1){
         ekfom_data.valid = false;
         ROS_WARN("No Effective Points! \n");
         return;
     }
+    
+    // ((vect3, pos)) ((SO3, rot)) ((SO3, offset_R_L_I)) ((vect3, offset_T_L_I)) ((vect3, vel)) ((vect3, bg)) ((vect3, ba)) ((S2, grav))
+    // number of point effct_feat_num
     ekfom_data.h_x = MatrixXd::Zero(effct_feat_num, 12); //23 因为点面距离只和位姿 外参有关 对其他状态量的导数都是0
     ekfom_data.h.resize(effct_feat_num);
     ekfom_data.R.resize(effct_feat_num, 1); // 把R作为向量 用的时候转换成diag
@@ -721,25 +751,37 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
     omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
 #endif
+
+
     for (int i = 0; i < effct_feat_num; i++)
     {
 
-//        const PointType &laser_p  = laserCloudOri->points[i];
+        // const PointType &laser_p  = laserCloudOri->points[i];
+        
+        // cross map of the point_this_be of lidar
         V3D point_this_be(point_to_plane_list[i].point);
         M3D point_be_crossmat;
         point_be_crossmat << SKEW_SYM_MATRX(point_this_be);
+        
+        // cross map of the point_this_be of imu
         V3D point_this = s.offset_R_L_I * point_this_be + s.offset_T_L_I;
         M3D point_crossmat;
         point_crossmat<<SKEW_SYM_MATRX(point_this);
 
         /*** get the normal vector of closest surface/corner ***/
-//        const PointType &norm_p = corr_normvect->points[i];
-//        V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
+        // const PointType &norm_p = corr_normvect->points[i];
+        // V3D norm_vec(norm_p.x, norm_p.y, norm_p.z);
+        
+        // get the normal of point_to_plane_list from BuildResidualListOMP
         V3D norm_vec(point_to_plane_list[i].normal);
 
         /*** calculate the Measuremnt Jacobian matrix H ***/
+        // get the C
         V3D C(s.rot.conjugate() *norm_vec);
+        // get the A
         V3D A(point_crossmat * C);
+        
+        // enable the extrinsic matrix estimation
         if (extrinsic_est_en)
         {
             V3D B(point_be_crossmat * s.offset_R_L_I.conjugate() * C); //s.rot.conjugate()*norm_vec);
@@ -769,7 +811,7 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
 //        J_nq.block<1, 3>(0, 3) = -ptpl_list[i].normal;
 //        double sigma_l = J_nq * ptpl_list[i].plane_cov * J_nq.transpose();
 //
-//        M3D cov_lidar = calcBodyCov(ptpl_list[i].point, ranging_cov, angle_cov);
+//        M3D cov_lidar = calcualte_body_covariance_lidar_frame(ptpl_list[i].point, ranging_cov, angle_cov);
 //        M3D R_cov_Rt = s.rot * cov_lidar * s.rot.conjugate();
 //        // HACK 1. 因为是标量 所以求逆直接用1除
 //        // HACK 2. 不同分量的方差用加法来合成 因为公式(12)中的Sigma是对角阵，逐元素运算之后就是对角线上的项目相加
@@ -777,15 +819,23 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
 
         // norm_p中存了匹配的平面法向 还有点面距离
         // V3D point_world = s.rot * (s.offset_R_L_I * ptpl_list[i].point + s.offset_T_L_I) + s.pos;
+        
+        // get the point of the world
         V3D point_world = point_to_plane_list[i].point_world;
         // /*** get the normal vector of closest surface/corner ***/
+        
+        // jacobina of [n,q]
         Eigen::Matrix<double, 1, 6> J_nq;
         J_nq.block<1, 3>(0, 0) = point_world - point_to_plane_list[i].center;
         J_nq.block<1, 3>(0, 3) = -point_to_plane_list[i].normal;
         double sigma_l = J_nq * point_to_plane_list[i].plane_cov * J_nq.transpose();
 
-        // M3D cov_lidar = calcBodyCov(ptpl_list[i].point, ranging_cov, angle_cov);
+	//  
+        // M3D cov_lidar = calcualte_body_covariance_lidar_frame(ptpl_list[i].point, ranging_cov, angle_cov);
+        
         M3D cov_lidar = point_to_plane_list[i].cov_lidar;
+        
+        //
         M3D R_cov_Rt = s.rot * s.offset_R_L_I * cov_lidar * s.offset_R_L_I.conjugate() * s.rot.conjugate();
         // HACK 1. 因为是标量 所以求逆直接用1除
         // HACK 2. 不同分量的方差用加法来合成 因为公式(12)中的Sigma是对角阵，逐元素运算之后就是对角线上的项目相加
@@ -929,13 +979,19 @@ int main(int argc, char** argv)
     ros::Rate rate(5000);
     bool status = ros::ok();
     
+    
+    // the program running
     while (status)
     {
+    	// end the running
         if (flg_exit) break;
         ros::spinOnce();
         
+        // sync the package
         if(sync_packages(Measures))
         {
+        
+            // the first scan
             if (flg_first_scan)
             {
                 first_lidar_time = Measures.lidar_beg_time;
@@ -944,63 +1000,92 @@ int main(int argc, char** argv)
                 continue;
             }
 
+
+            // use imu to filter the lidar point into feature_undistort
             p_imu->Process(Measures, kf, feature_undistort);
+            
+            // get the state from the kalman filter
             state_point = kf.get_x();
+            
+            // get the position by the kalman filter information
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
+            // something wrong
             if (feature_undistort->empty() || (feature_undistort == NULL))
             {
                 ROS_WARN("No point, skip this scan!\n");
                 continue;
             }
 
-            flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? \
-                            false : true;
+	     // get whether the kalman filter is running 
+            flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
+            
+            // =========== [step 1, get the input lidar point with variance in lidar frame, initilize voxel map with covariance ] =========== //
+            
             // ===============================================================================================================
+            
+            // first frame, if kalman is running, then the voxel is initialized
             // 第一帧 如果ekf初始化了 就初始化voxel地图
             if (flg_EKF_inited && !init_map) {
+            
+                // the lidar of the world
                 PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI);
+                
+                // transform the feature_undistort to the world_lidar
                 transformLidar(state_point, feature_undistort, world_lidar);
                 std::vector<pointWithCov> pv_list;
 
+                // get the P of the position, rotation, ......, ((vect3, pos)) ((SO3, rot)) ((SO3, offset_R_L_I)) ((vect3, offset_T_L_I)) ((vect3, vel)) ((vect3, bg)) ((vect3, ba)) ((S2, grav))
                 std::cout << kf.get_P() << std::endl;
+                
+                // calculate he P the covariance matrix, to make the voxel of map
                 // 计算第一帧所有点的covariance 并用于构建初始地图
                 for (size_t i = 0; i < world_lidar->size(); i++) {
+                    // initialize the point with covariance, pv
                     pointWithCov pv;
-                    pv.point << world_lidar->points[i].x, world_lidar->points[i].y,
-                            world_lidar->points[i].z;
-                    V3D point_this(feature_undistort->points[i].x,
+                    
+                    // put world lidar point, x, y, z, into the pv
+                    pv.point << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
+                    
+                    // initialize point_this_lidar_frame, with lidar frame point
+                    V3D point_this_lidar_frame(feature_undistort->points[i].x,
                                    feature_undistort->points[i].y,
                                    feature_undistort->points[i].z);
-                    // if z=0, error will occur in calcBodyCov. To be solved
-                    if (point_this[2] == 0) {
-                        point_this[2] = 0.001;
+                                   
+                    // if z=0, error will occur in calcualte_body_covariance_lidar_frame. To be solved
+                    if (point_this_lidar_frame[2] == 0) {
+                        point_this_lidar_frame[2] = 0.001;
                     }
                     
-                    //cout<<"========calcBodyCov=========="<<endl;
-                    //cout<<point_this.size()<<endl; // = 3
-                    M3D cov_lidar = calcBodyCov(point_this, ranging_cov, angle_cov);
+                    //cout<<"========calcualte_body_covariance_lidar_frame=========="<<endl;
+                    //cout<<point_this_lidar_frame.size()<<endl; // = 3
+                    
+                    // 
+                    M3D cov_lidar = calcualte_body_covariance_lidar_frame(point_this_lidar_frame, ranging_cov, angle_cov);
                     // 转换到world系
-                    M3D cov_world = transformLiDARCovarianceToWorldCovariance(point_this, kf, cov_lidar);
+                    M3D cov_world = transformLiDARCovarianceToWorldCovariance(point_this_lidar_frame, kf, cov_lidar);
 
                     pv.cov = cov_world;
                     pv_list.push_back(pv);
+                    
+                
                     Eigen::Vector3d sigma_pv = pv.cov.diagonal();
                     sigma_pv[0] = sqrt(sigma_pv[0]);
                     sigma_pv[1] = sqrt(sigma_pv[1]);
                     sigma_pv[2] = sqrt(sigma_pv[2]);
+                    
+                    
                 }
 
 		cout<<"========buildVoxelMap=========="<<endl;
 		cout<<pv_list.size()<<endl;  
 		//while(1){}  //26623
 
-                buildVoxelMap(pv_list, max_voxel_size, max_layer, layer_size,
-                              max_points_size, max_points_size, min_eigen_value,
-                              voxel_map);
+                // build voxel map, input pv_list, CONSTANT, max_voxel_size = 1.0m, max_layer = 2, layer_size = [5,5,5,5,5], max_points_size = 100, min_eigen_value = 0.003
+                buildVoxelMap(pv_list, max_voxel_size, max_layer, layer_size, max_points_size, max_points_size, min_eigen_value, voxel_map);
                 std::cout << "build voxel map" << std::endl;
 
-
+                // publish the voxel map
                 if (publish_voxel_map) {
                     pubVoxelMap(voxel_map, publish_max_voxel_layer, voxel_map_pub);
                 }
@@ -1009,19 +1094,26 @@ int main(int argc, char** argv)
                 continue;
             }
 
+            // downSizeFilterSurf is 0.5 * 0.5 * 0.5
             /*** downsample the feature points in a scan ***/
             downSizeFilterSurf.setInputCloud(feature_undistort);
             downSizeFilterSurf.filter(*feature_down_sample_body);
+            
             sort(feature_down_sample_body->points.begin(), feature_down_sample_body->points.end(), time_list);
 
+            // number of point in feature cloud
             feature_down_sample_size = feature_down_sample_body->points.size();
-            // 由于点云的body var是一直不变的 因此提前计算 在迭代时可以复用
+            // 由于点云的body var in lidar frame 是一直不变的 因此提前计算 在迭代时可以复用
+            
             variance_down_sample_body.clear();
+            
             for (auto & pt:feature_down_sample_body->points) {
-                V3D point_this(pt.x, pt.y, pt.z);
-                variance_down_sample_body.push_back(calcBodyCov(point_this, ranging_cov, angle_cov));
+                V3D point_this_lidar_frame(pt.x, pt.y, pt.z);
+                // variance of point in lidar frame
+                variance_down_sample_body.push_back(calcualte_body_covariance_lidar_frame(point_this_lidar_frame, ranging_cov, angle_cov));
             }
 
+            // less feature point
             /*** ICP and iterated Kalman filter update ***/
             if (feature_down_sample_size < 5)
             {
@@ -1029,59 +1121,100 @@ int main(int argc, char** argv)
                 continue;
             }
             
+            
+            // =========== [step 2, run the esekf kalman filter to get the state and covariance ] =========== //
+            
             // ===============================================================================================================
             // 开始迭代滤波
+            
             /*** iterated state estimation ***/
             double t_update_start = omp_get_wtime();
             double solve_H_time = 0;
+            
+            // 2. update ((vect3, pos)) ((SO3, rot)) ((SO3, offset_R_L_I)) ((vect3, offset_T_L_I)) ((vect3, vel)) ((vect3, bg)) ((vect3, ba)) ((S2, grav))
             kf.update_iterated_dyn_share_diagonal();
-//            kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
-            double t_update_end = omp_get_wtime();
+            
+            // kf.update_iterated_dyn_share_modified(LASER_POINT_COV, solve_H_time);
+            double t_update_end = omp_get_wtime();               
             sum_optimize_time += t_update_end - t_update_start;
-
+            
+            
+            
+            // get the state of kalman filter, 
             state_point = kf.get_x();
+            
+            // rotaton to euler angle
             euler_cur = SO3ToEuler(state_point.rot);
+            
+            // position of lidar by imu information
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+            
+            // quatation of rotation matrix
             geoQuat.x = state_point.rot.coeffs()[0];
             geoQuat.y = state_point.rot.coeffs()[1];
             geoQuat.z = state_point.rot.coeffs()[2];
             geoQuat.w = state_point.rot.coeffs()[3];
-//
-            std::printf("BA: %.4f %.4f %.4f   BG: %.4f %.4f %.4f   g: %.4f %.4f %.4f\n",
+
+	    // log out the inforation off 
+            std::printf("Bias of Acceleration: %.4f %.4f %.4f   Bias Gravity: %.4f %.4f %.4f   grivity: %.4f %.4f %.4f\n",
                         kf.get_x().ba.x(),kf.get_x().ba.y(),kf.get_x().ba.z(),
                         kf.get_x().bg.x(),kf.get_x().bg.y(),kf.get_x().bg.z(),
                         kf.get_x().grav.get_vect().x(), kf.get_x().grav.get_vect().y(), kf.get_x().grav.get_vect().z()
             );
 
+
+
+	    // ======================================================[step 3, update the voxel map of covariance ]========================================================= //
+	    
             // ===============================================================================================================
             // 更新地图
             /*** add the points to the voxel map ***/
+            
             // 用最新的状态估计将点及点的covariance转换到world系
+            
+            // array of point with covariance information pv_list
             std::vector<pointWithCov> pv_list;
+            
+            // lidar point int the world frame
             PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI);
+            
+            // tranform the point feature_down_sample_body by state_point information to world_lidar point in the world frame
             transformLidar(state_point, feature_down_sample_body, world_lidar);
             
+            
             for (size_t i = 0; i < feature_down_sample_body->size(); i++) {
+            
+                // point with covariance information, pv
                 // 保存body系和world系坐标
                 pointWithCov pv;
                 pv.point << feature_down_sample_body->points[i].x, feature_down_sample_body->points[i].y, feature_down_sample_body->points[i].z;
+                
                 // 计算lidar点的cov
-                // FIXME 这里错误的使用世界系的点来calcBodyCov时 反倒在某些seq（比如hilti2022的03 15）上效果更好 需要考虑是不是init_plane时使用更大的cov更好
+                // FIXME 这里错误的使用世界系的点来calcualte_body_covariance_lidar_frame时 反倒在某些seq（比如hilti2022的03 15）上效果更好 需要考虑是不是init_plane时使用更大的cov更好
                 // 注意这个在每次迭代时是存在重复计算的 因为lidar系的点云covariance是不变的
-                // M3D cov_lidar = calcBodyCov(pv.point, ranging_cov, angle_cov);
+                // M3D cov_lidar = calcualte_body_covariance_lidar_frame(pv.point, ranging_cov, angle_cov);
+                
+                // the covariance of point in lidar frame
                 M3D cov_lidar = variance_down_sample_body[i];
+                
+                // add the the covariance of point in lidar frame to the covariance of point in world frame
                 // 将body系的var转换到world系
                 M3D cov_world = transformLiDARCovarianceToWorldCovariance(pv.point, kf, cov_lidar);
 
                 // 最终updateVoxelMap需要用的是world系的point
                 pv.cov = cov_world;
                 pv.point << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
+                
+                // put the point of world covariance in an array
                 pv_list.push_back(pv);
             }
 
             t_update_start = omp_get_wtime();
             
+            // make the point arrange from high variance to low variance
             std::sort(pv_list.begin(), pv_list.end(), var_contrast);
+            
+            // update the voxal map by covariance
             updateVoxelMapOMP(pv_list, max_voxel_size, max_layer, layer_size,
                            max_points_size, max_points_size, min_eigen_value,
                            voxel_map);
@@ -1089,8 +1222,11 @@ int main(int argc, char** argv)
             t_update_end = omp_get_wtime();
             sum_update_time += t_update_end - t_update_start;
 
+            // number of scan occur
             scan_index++;
-            std::printf("Mean  Topt: %.5fs   Tu: %.5fs\n", sum_optimize_time / scan_index, sum_update_time / scan_index);
+            
+            // output the information
+            std::printf("Mean  Time of optimization: %.5fs   T of update: %.5fs\n", sum_optimize_time / scan_index, sum_update_time / scan_index);
             // ===============================================================================================================
             // 可视化相关的shit
             /******* Publish odometry *******/
@@ -1101,10 +1237,10 @@ int main(int argc, char** argv)
 //
             /******* Publish points *******/
             if (path_en)                         publish_path(pubPath);
-            if (scan_pub_en)      publish_frame_world(pubLaserCloudFull);
+            if (scan_pub_en)                     publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
             if (publish_voxel_map) {
-                pubVoxelMap(voxel_map, publish_max_voxel_layer, voxel_map_pub);
+                                                 pubVoxelMap(voxel_map, publish_max_voxel_layer, voxel_map_pub);
             }
             // publish_effect_world(pubLaserCloudEffect);
             // publish_map(pubLaserCloudMap);
