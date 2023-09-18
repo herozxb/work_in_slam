@@ -230,7 +230,8 @@ void RGBpointBodyLidarToIMU(PointType const * const pi, PointType * const po)
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
     auto time_offset = lidar_time_offset;
-//    std::printf("lidar offset:%f\n", lidar_time_offset);
+    std::printf("lidar offset:%f\n", lidar_time_offset);
+    ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
     mtx_buffer.lock();
     scan_count ++;
     double preprocess_start_time = omp_get_wtime();
@@ -243,6 +244,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
     lidar_buffer.push_back(ptr);
+    //ROS_INFO("p_preprocess->process[0] %.6f", ptr->points.back().curvature);
     time_buffer.push_back(msg->header.stamp.toSec() + time_offset);
     last_timestamp_lidar = msg->header.stamp.toSec() + time_offset;
     s_plot11[scan_count] = omp_get_wtime() - preprocess_start_time;
@@ -289,7 +291,7 @@ void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg)
 void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
     publish_count ++;
-    // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
+    cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
 
     if (abs(timediff_lidar_wrt_imu) > 0.1 && time_sync_en)
@@ -302,8 +304,8 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 
     if (timestamp < last_timestamp_imu)
     {
-//        ROS_WARN("imu loop back, clear buffer");
-//        imu_buffer.clear();
+        ROS_WARN("imu loop back, clear buffer");
+        imu_buffer.clear();
         ROS_WARN("imu loop back, ignoring!!!");
         ROS_WARN("current T: %f, last T: %f", timestamp, last_timestamp_imu);
         return;
@@ -333,7 +335,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     last_timestamp_imu = timestamp;
 
     mtx_buffer.lock();
-
+    cout << "got imu: " << timestamp << " imu size " << imu_buffer.size() << endl;
     imu_buffer.push_back(msg);
     mtx_buffer.unlock();
     sig_buffer.notify_all();
@@ -346,7 +348,7 @@ bool sync_packages(MeasureGroup &meas)
     if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
     }
-
+    cout<<"=========[0]==========="<<endl;
     /*** push a lidar scan ***/
     if(!lidar_pushed)
     {
@@ -356,10 +358,12 @@ bool sync_packages(MeasureGroup &meas)
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
             ROS_WARN("Too few input point cloud!\n");
+            //ROS_INFO("lidar_end_time[0] %.6f", lidar_end_time);
         }
         else if (meas.lidar->points.back().curvature / double(1000) < 0.5 * lidar_mean_scantime)
         {
             lidar_end_time = meas.lidar_beg_time + lidar_mean_scantime;
+            //ROS_INFO("lidar_end_time[1] %.6f", lidar_end_time);
         }
         else
         {
@@ -374,15 +378,20 @@ bool sync_packages(MeasureGroup &meas)
 //                std::printf("%f ", meas.lidar->points[meas.lidar->size() - i - 1].curvature / double(1000));
 //            }
 //            std::printf("last point offset time: %f\n", meas.lidar->points.back().curvature / double(1000));
+            //ROS_INFO("lidar_end_time[2.0] %.6f", meas.lidar_beg_time);
+            //ROS_INFO("lidar_end_time[2.1] %.6f", meas.lidar->points.size());
+            //ROS_INFO("lidar_end_time[2.1] %.6f", meas.lidar->points.back().curvature);
             scan_num ++;
             lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
 //            lidar_end_time = meas.lidar_beg_time + (meas.lidar->points[meas.lidar->points.size() - 20]).curvature / double(1000);
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
+            //ROS_INFO("lidar_end_time[2] %.6f", lidar_end_time);
 //            std::printf("pcl_bag_time: %f\n", meas.lidar_beg_time);
 //            std::printf("lidar_end_time: %f\n", lidar_end_time);
         }
 
         meas.lidar_end_time = lidar_end_time;
+        //ROS_INFO("lidar_end_time[3] %.6f", lidar_end_time);
 //        std::printf("Scan start timestamp: %f, Scan end time: %f\n", meas.lidar_beg_time, meas.lidar_end_time);
 
         lidar_pushed = true;
@@ -392,17 +401,27 @@ bool sync_packages(MeasureGroup &meas)
     {
         return false;
     }
-
+    cout<<"=========[1]==========="<<endl;
+    cout<<imu_buffer.size()<<endl;
+    cout<<"=========[1.0]==========="<<endl;
     /*** push imu data, and pop from imu buffer ***/
+    
     double imu_time = imu_buffer.front()->header.stamp.toSec();
     meas.imu.clear();
+    //ROS_INFO("imu_time %.6f", imu_time);
+    //ROS_INFO("lidar_end_time %.6f", lidar_end_time);
+    
     while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
     {
         imu_time = imu_buffer.front()->header.stamp.toSec();
         if(imu_time > lidar_end_time) break;
         meas.imu.push_back(imu_buffer.front());
         imu_buffer.pop_front();
+	//ROS_INFO("imu_time %.6f", imu_time);
+	//ROS_INFO("lidar_end_time %.6f", lidar_end_time);
+        cout<<imu_buffer.size()<<endl;
     }
+    cout<<"=========[2]==========="<<endl;
 
     lidar_buffer.pop_front();
     time_buffer.pop_front();
@@ -844,6 +863,10 @@ void observation_model_share(state_ikfom &s, esekfom::dyn_share_datastruct<doubl
         // 计算测量方差R并赋值 目前暂时使用固定值
         // ekfom_data.R(i) = 1.0 / LASER_POINT_COV;
         ekfom_data.R(i) = R_inv;
+        
+        //cout<<"========================v======================"<<endl;      
+        //cout<<s.vel<<endl;
+        
     }
 
     // std::printf("Effective Points: %d\n", effct_feat_num);
@@ -1026,8 +1049,9 @@ int main(int argc, char** argv)
             
             // first frame, if kalman is running, then the voxel is initialized
             // 第一帧 如果ekf初始化了 就初始化voxel地图
+            cout<<"=====================world_lidar->size[0]======================"<<endl;
             if (flg_EKF_inited && !init_map) {
-            
+                cout<<"=====================world_lidar->size[1]======================"<<endl;
                 // the lidar of the world
                 PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI);
                 
@@ -1040,6 +1064,8 @@ int main(int argc, char** argv)
                 
                 // calculate he P the covariance matrix, to make the voxel of map
                 // 计算第一帧所有点的covariance 并用于构建初始地图
+		cout<<"=====================world_lidar->size======================"<<endl;
+		cout<<world_lidar->size()<<endl;
                 for (size_t i = 0; i < world_lidar->size(); i++) {
                     // initialize the point with covariance, pv
                     pointWithCov pv;
@@ -1086,7 +1112,7 @@ int main(int argc, char** argv)
                 std::cout << "build voxel map" << std::endl;
 
                 // publish the voxel map
-                if (publish_voxel_map) {
+                if (1) {
                     pubVoxelMap(voxel_map, publish_max_voxel_layer, voxel_map_pub);
                 }
                 
@@ -1142,6 +1168,17 @@ int main(int argc, char** argv)
             
             // get the state of kalman filter, 
             state_point = kf.get_x();
+            
+            cout<<"========================v======================"<<endl;      
+            cout<<state_point.vel<<endl;
+            if( abs(state_point.vel[0]) > 1 || abs(state_point.vel[1]) > 1 || abs(state_point.vel[2]) > 1 )
+            {
+                state_point.vel << 0.0, 0.0, 0.0;
+            }
+            
+            kf.change_x(state_point);
+                        
+            
             
             // rotaton to euler angle
             euler_cur = SO3ToEuler(state_point.rot);
@@ -1242,7 +1279,7 @@ int main(int argc, char** argv)
             if (publish_voxel_map) {
                                                  pubVoxelMap(voxel_map, publish_max_voxel_layer, voxel_map_pub);
             }
-            // publish_effect_world(pubLaserCloudEffect);
+            // publish_effect(pubLaserCloudEffect);
             // publish_map(pubLaserCloudMap);
 
         }
