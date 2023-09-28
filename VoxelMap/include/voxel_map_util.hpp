@@ -671,7 +671,7 @@ void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
   std::printf("Insert: %d  Update: %d \n", insert_count, update_count);
 }
 
-void transformLidar(const StatesGroup &state,
+void transform_lidar_to_world(const StatesGroup &state,
                     const shared_ptr<ImuProcess> &p_imu,
                     const PointCloudXYZI::Ptr &input_cloud,
                     pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud) {

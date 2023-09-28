@@ -99,7 +99,6 @@ int iterCount, feature_down_size, NUM_MAX_ITERATIONS, laser_cloud_valid_number, 
 double first_lidar_time = 0;
 double lidar_end_time = 0;
 
-double residual_mean_last = 0.05;
 double total_distance = 0;
 double gyroscope_cov_scale, accelerater_cov_scale;
 double last_timestamp_lidar, last_timestamp_imu = -1.0;
@@ -340,6 +339,53 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) {
 
   last_timestamp_imu = timestamp;
 
+
+// ------------rotate_180_degree------------ //
+
+/*
+  Quaterniond imu_quaternion ( msg->orientation.x, msg->orientation.y, msg->orientation.z, msg->orientation.w);
+  
+  Matrix3d rotation_matrix = AngleAxisd( 180.0 * M_PI/ 180.0, Vector3d( 0, 0, 1 ) ).toRotationMatrix(); 
+  //RotationMatrixd angle_axis = AngleAxisd( 180.0 * M_PI/ 180.0, Vector3d( 0, 0, 1 ) ); 
+  
+  imu_quaternion = rotation_matrix * imu_quaternion ;
+  
+  imu_quaternion.normalize();
+  
+  msg->orientation.x = imu_quaternion.x();
+  msg->orientation.y = imu_quaternion.y();
+  msg->orientation.z = imu_quaternion.z();
+  msg->orientation.w = imu_quaternion.w();
+
+  Vector3d angular_velocity;
+  angular_velocity.x() = msg->angular_velocity.x;
+  angular_velocity.y() = msg->angular_velocity.y;
+  angular_velocity.z() = msg->angular_velocity.z;
+  
+  angular_velocity = rotation_matrix * angular_velocity;
+  
+  msg->angular_velocity.x = angular_velocity.x();
+  msg->angular_velocity.y = angular_velocity.y();  
+  msg->angular_velocity.z = angular_velocity.z();
+    
+  
+  Vector3d linear_acceleration;
+  linear_acceleration.x() = msg->linear_acceleration.x;
+  linear_acceleration.y() = msg->linear_acceleration.y;
+  linear_acceleration.z() = msg->linear_acceleration.z;
+  
+  linear_acceleration = rotation_matrix * linear_acceleration;
+  
+  msg->linear_acceleration.x = linear_acceleration.x();
+  msg->linear_acceleration.y = linear_acceleration.y();  
+  msg->linear_acceleration.z = linear_acceleration.z();
+
+  //*/
+
+// ------------rotate_180_degree[end]------------ //
+
+
+
   imu_buffer.push_back(msg);
   cout << "got imu: " << timestamp << " imu size " << imu_buffer.size() << endl;
   mtx_buffer.unlock();
@@ -353,7 +399,7 @@ bool sync_packages(MeasureGroup &meas)
     if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
     }
-    cout<<"=========[0]==========="<<endl;
+    //cout<<"=========[0]==========="<<endl;
     /*** push a lidar scan ***/
     if(!lidar_pushed)
     {
@@ -392,9 +438,9 @@ bool sync_packages(MeasureGroup &meas)
     {
         return false;
     }
-    cout<<"=========[1]==========="<<endl;
-    cout<<imu_buffer.size()<<endl;
-    cout<<"=========[1.0]==========="<<endl;
+    //cout<<"=========[1]==========="<<endl;
+    //cout<<imu_buffer.size()<<endl;
+    //cout<<"=========[1.0]==========="<<endl;
     /*** push imu data, and pop from imu buffer ***/
     double imu_time = imu_buffer.front()->header.stamp.toSec();
     meas.imu.clear();
@@ -411,7 +457,7 @@ bool sync_packages(MeasureGroup &meas)
 	//ROS_INFO("lidar_end_time %.6f", lidar_end_time);
         cout<<imu_buffer.size()<<endl;
     }
-    cout<<"=========[2]==========="<<endl;
+    //cout<<"=========[2]==========="<<endl;
     lidar_buffer.pop_front();
     time_buffer.pop_front();
     lidar_pushed = false;
@@ -733,6 +779,13 @@ int main(int argc, char **argv) {
       
     ros::spinOnce();
     
+    // 5 kinds of covarience
+    
+    // 1. lidar covarience of point 
+    // 2. world covarience of point
+    // 3. point to plane covarience, [n,q], n is normal, q is center
+    // 4. distance covarience, is 3 + 2
+    // 5. z = h(x) covarience, is 3 + 1
     
     if (sync_packages(Measures)) {
       // std::cout << "sync once" << std::endl;
@@ -754,7 +807,7 @@ int main(int argc, char **argv) {
       
       
       // [ IMU DONE ]
-      //imu process to feature undistort
+      //imu process to feature undistort, and move the pcl cloud to world coordinate
       p_imu->Process(Measures, state, feature_undistort);
       
       auto undistort_end  = std::chrono::high_resolution_clock::now();
@@ -772,24 +825,26 @@ int main(int argc, char **argv) {
 
       // =========== [step 1, get the input lidar point with variance in lidar frame, initilize voxel map with covariance ] =========== //
       
+      // if the lidar is working, then we initialize the EKF
       flg_EKF_inited = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
-      cout<<"=====================world_lidar->size[0]======================"<<endl;
+      
+
       if (flg_EKF_inited && !init_map) {
-        cout<<"=====================world_lidar->size[1]======================"<<endl;
+      
         pcl::PointCloud<pcl::PointXYZI>::Ptr world_lidar( new pcl::PointCloud<pcl::PointXYZI>);
         Eigen::Quaterniond q(state.rot_end);
         
         // feature_undistort to world_lidar
-        transformLidar(state, p_imu, feature_undistort, world_lidar);
+        transform_lidar_to_world(state, p_imu, feature_undistort, world_lidar);
+        
         std::vector<pointWithCov> pv_list;
         
-        cout<<"=====================world_lidar->size======================"<<endl;
-        cout<<world_lidar->size()<<endl;
         for (size_t i = 0; i < world_lidar->size(); i++) {
         
           pointWithCov pv;
           
           pv.point << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
+          
           V3D point_this( feature_undistort->points[i].x, feature_undistort->points[i].y, feature_undistort->points[i].z);
           
           // if z=0, error will occur in calcBodyCov. To be solved
@@ -800,9 +855,17 @@ int main(int argc, char **argv) {
 	  //cout<<"========calcBodyCov=========="<<endl;
 	  //cout<<point_this.size()<<endl; // = 3          
           
+	  // 1. lidar covarience of point 
+	  // 2. world covarience of point
+	  // 3. point to plane covarience, [n,q], n is normal, q is center
+	  // 4. distance covarience, is 3 + 2
+	  // 5. z = h(x) covarience, is 3 + 1
+
+
+          // 1. lidar covarience of point 
           // cov = cov_lidar
-          M3D cov;
-          calcBodyCov(point_this, ranging_cov, angle_cov, cov);
+          M3D cov_lidar;  
+          calcBodyCov(point_this, ranging_cov, angle_cov, cov_lidar);
 
 
           point_this += Lidar_offset_to_IMU;
@@ -810,12 +873,14 @@ int main(int argc, char **argv) {
           M3D point_crossmat;
           
           point_crossmat << SKEW_SYM_MATRX(point_this);
-          cov = state.rot_end * cov * state.rot_end.transpose() +
+          
+          // 2. world covarience of point
+          M3D cov_world = state.rot_end * cov_lidar * state.rot_end.transpose() +
                 (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() +
                 state.cov.block<3, 3>(3, 3);
           
           // cov = cov_world      
-          pv.cov = cov;
+          pv.cov = cov_world;
           
           pv_list.push_back(pv);
           
@@ -825,16 +890,14 @@ int main(int argc, char **argv) {
           sigma_pv[2] = sqrt(sigma_pv[2]);
         }
 
-	cout<<"========buildVoxelMap=========="<<endl;
+	cout<<"========pv_list.size()=========="<<endl;
 	cout<<pv_list.size()<<endl;      //16026
-	//while(1){}
-	
 
+
+        // build the initilized map by pv_list
         buildVoxelMap(pv_list, max_voxel_size, max_layer, layer_size, max_points_size, max_points_size, min_eigen_value, voxel_map);
                       
         std::cout << "build voxel map" << std::endl;
-
-
         scanIdx++;
         
         if (1) {
@@ -849,22 +912,30 @@ int main(int argc, char **argv) {
       /*** downsample the feature points in a scan ***/
       auto t_downsample_start = std::chrono::high_resolution_clock::now();
       
+      
+      
+      // down sample the point cloud
       down_size_filter_surface.setInputCloud(feature_undistort);
       down_size_filter_surface.filter(*feature_down_body);
       
-      auto t_downsample_end = std::chrono::high_resolution_clock::now();
       
+      
+      auto t_downsample_end = std::chrono::high_resolution_clock::now();
       std::cout << " feats size:" << feature_undistort->size() << ", down size:" << feature_down_body->size() << std::endl;
-                
       auto t_downsample = std::chrono::duration_cast<std::chrono::duration<double>>( t_downsample_end - t_downsample_start).count() * 1000;
-
+      
+      
+      
+      // sort the point cloud by the time
       sort(feature_down_body->points.begin(), feature_down_body->points.end(), time_list);
-
+      
+      
+      
       int rematch_number = 0;
       bool nearest_search_en = true;
-      double total_residual;
-
       scan_match_time = 0.0;
+
+
 
       std::vector<M3D> body_variance;
       std::vector<M3D> crossmat_list;
@@ -875,6 +946,7 @@ int main(int argc, char **argv) {
       /*** iterated state estimation ***/
       auto calculate_point_cov_start = std::chrono::high_resolution_clock::now();
       
+      // get the body variance
       for (size_t i = 0; i < feature_down_body->size(); i++) 
       {
       
@@ -884,30 +956,38 @@ int main(int argc, char **argv) {
           point_this[2] = 0.001;
         }
         
-        M3D cov; // cov = cov_lidar
+	// 1. lidar covarience of point 
+	// 2. world covarience of point
+	// 3. point to plane covarience, [n,q], n is normal, q is center
+	// 4. distance covarience, is 3 + 2
+	// 5. z = h(x) covarience, is 3 + 1
         
-        calcBodyCov(point_this, ranging_cov, angle_cov, cov);
+        // 1. lidar covarience of point 
+        M3D cov_lidar; // cov = cov_lidar
+        
+        calcBodyCov(point_this, ranging_cov, angle_cov, cov_lidar);
         
         M3D point_crossmat;
         point_crossmat << SKEW_SYM_MATRX(point_this);
         
         crossmat_list.push_back(point_crossmat);
-        body_variance.push_back(cov);
+        body_variance.push_back(cov_lidar);
         
       }
       
       auto calc_point_cov_end = std::chrono::high_resolution_clock::now();
       
       double calc_point_cov_time = std::chrono::duration_cast<std::chrono::duration<double>>( calc_point_cov_end - calculate_point_cov_start).count() * 1000;
-          
-
+      
+      // =========== [step 2.1, run the iterated esekf kalman filter is started ] =========== //
+      
+      // NUM_MAX_ITERATIONS = 10, the IEKF is started
       for (iterCount = 0; iterCount < NUM_MAX_ITERATIONS; iterCount++) {
       
         laser_cloud_origin->clear();
         laser_cloud_no_effect->clear();
         corrospend_norm_vector->clear();
         
-        total_residual = 0.0;
 
         std::vector<ptpl> point_to_plane_list;
         /** LiDAR match based on 3 sigma criterion **/
@@ -916,7 +996,7 @@ int main(int argc, char **argv) {
         std::vector<M3D> var_list;
         
         pcl::PointCloud<pcl::PointXYZI>::Ptr world_lidar( new pcl::PointCloud<pcl::PointXYZI> );
-        transformLidar(state, p_imu, feature_down_body, world_lidar);
+        transform_lidar_to_world(state, p_imu, feature_down_body, world_lidar);
         
         for (size_t i = 0; i < feature_down_body->size(); i++) {
         
@@ -925,29 +1005,43 @@ int main(int argc, char **argv) {
           pv.point << feature_down_body->points[i].x, feature_down_body->points[i].y, feature_down_body->points[i].z;
           pv.point_world << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
           
-          M3D cov = body_variance[i];
+
+	  // 1. lidar covarience of point 
+	  // 2. world covarience of point
+	  // 3. point to plane covarience, [n,q], n is normal, q is center
+	  // 4. distance covarience, is 3 + 2
+	  // 5. z = h(x) covarience, is 3 + 1
+          
+          // 1. lidar covarience of point 
+          M3D cov_lidar = body_variance[i];
           
           M3D point_crossmat = crossmat_list[i];
           M3D R_var = state.cov.block<3, 3>(0, 0);
           M3D T_var = state.cov.block<3, 3>(3, 3);
           // transformLiDARCovarianceToWorldCovariance()
-          cov = state.rot_end * cov * state.rot_end.transpose() + (-point_crossmat) * R_var * (-point_crossmat.transpose()) + T_var;
+          
+          // 2. world covarience of point
+          // cov = cov_world   the uncertainty of the LiDAR point of world coordinate
+          M3D cov_world = state.rot_end * cov_lidar * state.rot_end.transpose() + (-point_crossmat) * R_var * (-point_crossmat.transpose()) + T_var;
                 
-          pv.cov = cov;
+          pv.cov = cov_world;
           pv_list.push_back(pv);
-          var_list.push_back(cov);
+          var_list.push_back(cov_world);
           
         }
         
         auto scan_match_time_start = std::chrono::high_resolution_clock::now();
 
         std::vector<V3D> non_match_list;
+        // build the Voxel map
         BuildResidualListOMP(voxel_map, max_voxel_size, 3.0, max_layer, pv_list, point_to_plane_list, non_match_list);
         
         auto scan_match_time_end = std::chrono::high_resolution_clock::now();
 
         effect_feature_number = 0;
         
+        
+        // get all the residual
         for (int i = 0; i < point_to_plane_list.size(); i++) {
         
           PointType pi_body;
@@ -972,18 +1066,16 @@ int main(int argc, char **argv) {
           laser_cloud_origin->push_back(pi_body);
           corrospend_norm_vector->push_back(plane);
           
-          total_residual += fabs(distance);
         }
-        
-        residual_mean_last = total_residual / effect_feature_number;
         
         scan_match_time += std::chrono::duration_cast<std::chrono::duration<double>>( scan_match_time_end - scan_match_time_start).count() * 1000;
 
         auto t_solve_start = std::chrono::high_resolution_clock::now();
 
-        /*** Computation of Measuremnt Jacobian matrix H and measurents vector
-         * ***/
+
+        /*** Computation of Measuremnt Jacobian matrix H and measurents vector * ***/
          
+        // Get the  H_ and  H.transpose() * R.inverse()
         MatrixXd Hsub( effect_feature_number, 6);
         MatrixXd Hsub_Transpose_multiply_R_inverse( 6, effect_feature_number );
         
@@ -997,15 +1089,24 @@ int main(int argc, char **argv) {
           const PointType &laser_point = laser_cloud_origin->points[i];
           V3D point_this(laser_point.x, laser_point.y, laser_point.z);
           
-          M3D cov;
+          
+          // 1. lidar covarience of point 
+	  // 2. world covarience of point
+	  // 3. point to plane covarience, [n,q], n is normal, q is center
+	  // 4. distance covarience, is 3 + 2
+	  // 5. z = h(x) covarience, is 3 + 1
+          
+          // 1. lidar covarience of point 
+          M3D cov_lidar;
           
           if (calib_laser) {
-            calcBodyCov(point_this, ranging_cov, CALIB_ANGLE_COV, cov);
+            calcBodyCov(point_this, ranging_cov, CALIB_ANGLE_COV, cov_lidar);
           } else {
-            calcBodyCov(point_this, ranging_cov, angle_cov, cov);
+            calcBodyCov(point_this, ranging_cov, angle_cov, cov_lidar);
           }
-
-          cov = state.rot_end * cov * state.rot_end.transpose();
+          
+          // 1. lidar covarience of point 
+          cov_lidar = state.rot_end * cov_lidar * state.rot_end.transpose();
           
           M3D point_crossmat;
           point_crossmat << SKEW_SYM_MATRX(point_this);
@@ -1016,26 +1117,29 @@ int main(int argc, char **argv) {
           V3D point_world = state.rot_end * point_this + state.pos_end;
           
           // /*** get the normal vector of closest surface/corner ***/
+          
+          // 3. point to plane covarience, [n,q], n is normal, q is center
           Eigen::Matrix<double, 1, 6> J_nq;
           
           J_nq.block<1, 3>(0, 0) = point_world - point_to_plane_list[i].center;
           J_nq.block<1, 3>(0, 3) = -point_to_plane_list[i].normal;
+          
+          // 4. distance covarience, is 3 + 2
           double sigma_l = J_nq * point_to_plane_list[i].plane_cov * J_nq.transpose();
-          
-          
-          R_inverse(i) = 1.0 / (sigma_l + norm_vector.transpose() * cov * norm_vector);
+          R_inverse(i) = 1.0 / (sigma_l + norm_vector.transpose() * cov_lidar * norm_vector);
           
           
           laser_cloud_origin->points[i].intensity = sqrt(R_inverse(i));
           laser_cloud_origin->points[i].normal_x =  corrospend_norm_vector->points[i].intensity;
           laser_cloud_origin->points[i].normal_y =  sqrt(sigma_l);
-          laser_cloud_origin->points[i].normal_z =  sqrt(norm_vector.transpose() * cov * norm_vector);
-          laser_cloud_origin->points[i].curvature = sqrt(sigma_l + norm_vector.transpose() * cov * norm_vector);
+          laser_cloud_origin->points[i].normal_z =  sqrt(norm_vector.transpose() * cov_lidar * norm_vector);
+          laser_cloud_origin->points[i].curvature = sqrt(sigma_l + norm_vector.transpose() * cov_lidar * norm_vector);
 
           /*** calculate the Measuremnt Jacobian matrix H ***/
           V3D A(point_crossmat * state.rot_end.transpose() * norm_vector);
           Hsub.row(i) << VEC_FROM_ARRAY(A), norm_point.x, norm_point.y, norm_point.z;
-          Hsub_Transpose_multiply_R_inverse.col(i) << A[0] * R_inverse(i), A[1] * R_inverse(i), A[2] * R_inverse(i), 
+          
+          Hsub_Transpose_multiply_R_inverse.col(i) << A[0] * R_inverse(i),         A[1] * R_inverse(i),         A[2] * R_inverse(i), 
                                                       norm_point.x * R_inverse(i), norm_point.y * R_inverse(i), norm_point.z * R_inverse(i);
           /*** Measuremnt: distance to the closest surface/corner ***/
           measurement_vector(i) = -norm_point.intensity;
@@ -1045,6 +1149,7 @@ int main(int argc, char **argv) {
           {
                max_distance = measurement_vector(i);
           }
+          
           //float distance = (pi_world.x * pl.x + pi_world.y * pl.y + pi_world.z * pl.z + point_to_plane_list[i].d);
           //pl.intensity = distance;
           
@@ -1056,9 +1161,10 @@ int main(int argc, char **argv) {
         flg_EKF_converged = false;
         
         /*** Iterative Kalman Filter Update ***/
+        
         if (!flg_EKF_inited) {
         
-          cout << "||||||||||Initiallizing LiDar||||||||||" << endl;
+          cout << "===================Initiallizing LiDar===================" << endl;
           /*** only run in initialization period ***/
           
           MatrixXd H_init(MD(9, DIM_STATE)::Zero());
@@ -1103,14 +1209,11 @@ int main(int argc, char **argv) {
           // MatrixXd Hsub_Transpose_multiply_R_inverse( 6, effect_feature_number );
           // VectorXd R_inverse( effect_feature_number );
           // VectorXd measurement_vector( effect_feature_number );
-          
           // MatrixXd K(DIM_STATE, effect_feature_number);
           
           //solution = K * measurement_vector + vector_box_minus - K * Hsub * vector_box_minus.block<6, 1>(0, 0);
-          solution = vector_box_minus + K * ( measurement_vector - Hsub * vector_box_minus.block<6, 1>(0, 0) );
-          
-          
-          
+          solution = -1 * vector_box_minus + K * ( measurement_vector - Hsub * ( -1 ) * vector_box_minus.block<6, 1>(0, 0) );
+
           //float distance = (pi_world.x * pl.x + pi_world.y * pl.y + pi_world.z * pl.z + point_to_plane_list[i].d);
           //pl.intensity = distance;
           
@@ -1127,6 +1230,15 @@ int main(int argc, char **argv) {
           //cout<<"==========v[0]_before_eskf============"<<endl; 
           //cout<<state.vel_end<<endl;
           
+          
+          //V3D d_velocity(Zero3d);
+          
+          //d_velocity(0) = 1 * solution.block<3, 1>(6, 0)(0);
+          //d_velocity(1) = 1 * solution.block<3, 1>(6, 0)(1);
+          //d_velocity(2) = 1 * solution.block<3, 1>(6, 0)(2);
+          
+          //solution.block<3, 1>(6, 0) = d_velocity;
+          
           state += solution;
 
           R_add = solution.block<3, 1>(0, 0);
@@ -1136,18 +1248,28 @@ int main(int argc, char **argv) {
           //cout<<"========================R,t======================"<<endl; 
           //cout<<state.rot_end<<","<<endl;     
           //cout<<state.pos_end<<","<<endl;
-          cout<<"==========v[1]_after_eskf============"<<endl; 
+          cout<<"==========velocity[0]_after_eskf============"<<endl; 
           cout<<state.vel_end<<endl;
           cout<<"==========dv============"<<endl; 
           cout<<solution.block<3, 1>(6, 0)<<endl;
+          //cout<<"=========measurement_vector========="<<endl;
+          //cout<<measurement_vector(0)<<endl;
+          //cout<<measurement_vector(1)<<endl;
+          //cout<<measurement_vector(2)<<endl;
+          //cout<<max_distance<<endl;
           
-          cout<<"=========measurement_vector========="<<endl;
-          cout<<measurement_vector(0)<<endl;
-          cout<<measurement_vector(1)<<endl;
-          cout<<measurement_vector(2)<<endl;
-          cout<<max_distance<<endl;
+	  //if( abs(state.vel_end(0)) > 2 || abs(state.vel_end(1)) > 2 || abs(state.vel_end(2)) > 0.5 )
+	  //{
+	    //state_point.vel << state_point.vel[0]/5.0, state_point.vel[1]/5.0, state_point.vel[2]/5.0;
+	    //state.vel_end << 0.0, 0.0, 0.0;
+	    //state_point.rot.coeffs()[0] = 0.0;
+	    //state_point.rot.coeffs()[1] = 0.0;
+	    //state_point.rot.coeffs()[2] = 0.0;
+	    //state_point.rot.coeffs()[3] = 1.0;
+	  //}
           
-                    
+          
+          
           if ((R_add.norm() * 57.3 < 0.01) && (T_add.norm() * 100 < 0.015)) {
             flg_EKF_converged = true;
           }
@@ -1163,26 +1285,24 @@ int main(int argc, char **argv) {
         
         nearest_search_en = false;
         
-        if (flg_EKF_converged ||
-            ((rematch_number == 0) && (iterCount == (NUM_MAX_ITERATIONS - 2)))) {
-            
+        if (flg_EKF_converged || ((rematch_number == 0) && (iterCount == (NUM_MAX_ITERATIONS - 2)))) {
           nearest_search_en = true;
           rematch_number++;
-          
         }
 
         /*** Convergence Judgements and Covariance Update ***/
         
-        if (!EKF_stop_flg &&
-            (rematch_number >= 2 || (iterCount == NUM_MAX_ITERATIONS - 1))) {
+        if (!EKF_stop_flg && (rematch_number >= 2 || (iterCount == NUM_MAX_ITERATIONS - 1))) {
             
           if (flg_EKF_inited) {
           
             /*** Covariance Update ***/
             G.setZero();
             G.block<DIM_STATE, 6>(0, 0) = K * Hsub;
+            
             state.cov = (I_STATE - G) * state.cov;
             total_distance += (state.pos_end - position_last).norm();
+            
             position_last = state.pos_end;
 
             geometry_quaternion = tf::createQuaternionMsgFromRollPitchYaw( euler_current(0), euler_current(1), euler_current(2) );
@@ -1209,8 +1329,7 @@ int main(int argc, char **argv) {
       auto map_incremental_start = std::chrono::high_resolution_clock::now();
       
       pcl::PointCloud<pcl::PointXYZI>::Ptr world_lidar( new pcl::PointCloud<pcl::PointXYZI> );
-      
-      transformLidar(state, p_imu, feature_down_body, world_lidar);
+      transform_lidar_to_world(state, p_imu, feature_down_body, world_lidar);
       std::vector<pointWithCov> pv_list;
       
       for (size_t i = 0; i < world_lidar->size(); i++) {
@@ -1219,10 +1338,10 @@ int main(int argc, char **argv) {
         pv.point << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
         
         M3D point_crossmat = crossmat_list[i];
-        M3D cov = body_variance[i];
+        M3D cov_body = body_variance[i];
         
-        cov = state.rot_end * cov * state.rot_end.transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);
-        pv.cov = cov;
+        cov_body = state.rot_end * cov_body * state.rot_end.transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);
+        pv.cov = cov_body;
         pv_list.push_back(pv);
         
       }
@@ -1251,7 +1370,7 @@ int main(int argc, char **argv) {
       q.setZ(geometry_quaternion.z);
       
       transform.setRotation(q);
-      transformLidar(state, p_imu, feature_down_body, world_lidar);
+      transform_lidar_to_world(state, p_imu, feature_down_body, world_lidar);
       
       sensor_msgs::PointCloud2 pub_cloud;
       pcl::toROSMsg(*world_lidar, pub_cloud);

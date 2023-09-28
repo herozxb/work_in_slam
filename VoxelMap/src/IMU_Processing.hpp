@@ -236,11 +236,14 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, in
   last_imu_ = meas.imu.back();
 }
 
+
+
 void ImuProcess::UndistortPcl(const MeasureGroup &meas, 
 					StatesGroup &state_inout, 
 					PointCloudXYZI &pcl_out)
 {
-  cout<<"=============in UndistortPcl=============="<<endl;
+
+
   /*** add the imu of the last frame-tail to the of current frame-head ***/
   auto v_imu = meas.imu;
   v_imu.push_front(last_imu_);
@@ -338,6 +341,8 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
 
     /* Specific acceleration (global frame) of IMU */
     acc_imu = R_imu * (acc_avr - state_inout.bias_a) + state_inout.gravity;
+    
+    
     cout<<"=============gravity[-1]=============="<<endl;
     cout<<R_imu * (acc_avr - state_inout.bias_a)<<endl;
 
@@ -349,7 +354,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
     cout<<state_inout.gravity<<endl;
     cout<<"=============acc_imu[2]=============="<<endl;
     cout<<acc_imu<<endl;
-
+    //*/
     /* propogation of IMU */
     pos_imu = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;
 
@@ -381,10 +386,10 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
     cout<<R_imu<<endl;
     cout<<"=========pose6d[END]=========="<<endl;
     
-    if( abs(vel_imu[0]) > 1 )
-    {
-    	vel_imu << 0.0, 0.0, 0.0;
-    }
+    //if( abs(vel_imu[0]) > 1.0 || abs(vel_imu[1]) > 1.0 || abs(vel_imu[2]) > 0.5 )
+    //{
+    	//vel_imu << 0.0, 0.0, 0.0;
+    //}
     
     IMUpose.push_back(set_pose6d(offs_t, acc_s_last, angvel_last, vel_imu, pos_imu, R_imu));
     cout<<IMUpose[counter].pos[0]<<endl;
