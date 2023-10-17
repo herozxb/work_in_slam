@@ -1136,7 +1136,7 @@ int main(int argc, char **argv) {
           laser_cloud_origin->points[i].curvature = sqrt(sigma_l + norm_vector.transpose() * cov_lidar * norm_vector);
 
           /*** calculate the Measuremnt Jacobian matrix H ***/
-          V3D A(point_crossmat * state.rot_end.transpose() * norm_vector);
+          V3D A(point_crossmat * state.rot_end.transpose() * norm_vector);   //SKEW_SYM_MATRX(point_this) * R.transpose() * n, de/dR = -R * SKEW_SYM_MATRX(point_this), n * de/dR = - n * R * SKEW_SYM_MATRX(point_this)
           Hsub.row(i) << VEC_FROM_ARRAY(A), norm_point.x, norm_point.y, norm_point.z;
           
           Hsub_Transpose_multiply_R_inverse.col(i) << A[0] * R_inverse(i),         A[1] * R_inverse(i),         A[2] * R_inverse(i), 
