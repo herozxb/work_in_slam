@@ -104,8 +104,13 @@ Visualization Manager:
         - Alpha: 0.5
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
+<<<<<<< HEAD
             Max Value: 0.443191796541214
             Min Value: -9.999468803405762
+=======
+            Max Value: 18.686166763305664
+            Min Value: -17.48259162902832
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
             Value: true
           Axis: Z
           Channel Name: intensity
@@ -218,7 +223,11 @@ Visualization Manager:
       Buffer Length: 2
       Class: rviz/Path
       Color: 25; 255; 255
+<<<<<<< HEAD
       Enabled: false
+=======
+      Enabled: true
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
       Head Diameter: 0
       Head Length: 0.10000000149011612
       Length: 0.5
@@ -237,7 +246,11 @@ Visualization Manager:
       Shaft Length: 0.5
       Topic: /path
       Unreliable: false
+<<<<<<< HEAD
       Value: false
+=======
+      Value: true
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
     - Class: rviz/Marker
       Enabled: false
       Marker Topic: /planner_normal
@@ -414,6 +427,7 @@ Visualization Manager:
       Unreliable: false
       Value: false
     - Class: rviz/MarkerArray
+<<<<<<< HEAD
       Enabled: false
       Marker Topic: /planes
       Name: MarkerArray
@@ -421,6 +435,15 @@ Visualization Manager:
         {}
       Queue Size: 100
       Value: false
+=======
+      Enabled: true
+      Marker Topic: /planes
+      Name: MarkerArray
+      Namespaces:
+        plane: true
+      Queue Size: 100
+      Value: true
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -505,7 +528,11 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
+<<<<<<< HEAD
       Distance: 137.0366668701172
+=======
+      Distance: 48.04997253417969
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -513,17 +540,29 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
+<<<<<<< HEAD
         X: 4.26964807510376
         Y: -21.857295989990234
         Z: -1.2067371606826782
+=======
+        X: 30.00518226623535
+        Y: 17.981979370117188
+        Z: -2.7363691329956055
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
+<<<<<<< HEAD
       Pitch: 0.5197967886924744
       Target Frame: camera_init
       Yaw: 2.0304040908813477
+=======
+      Pitch: 1.1147969961166382
+      Target Frame: camera_init
+      Yaw: 2.1603939533233643
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
     Saved:
       - Class: rviz/Orbit
         Distance: 310.7291564941406

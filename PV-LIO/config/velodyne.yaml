@@ -13,7 +13,7 @@ preprocess:
 mapping:
     down_sample_size: 0.4
     max_iteration: 4
-    voxel_size: 1.0
+    voxel_size: 0.5
     max_layer: 4                # 4 layer, 0, 1, 2, 3
     layer_point_size: [ 5, 5, 5, 5, 5 ]
     plannar_threshold: 0.01

@@ -601,7 +601,81 @@ void updateVoxelMap(const std::vector<pointWithCov> &input_points,
   }
 }
 
+<<<<<<< HEAD
 void transformLidar(const StatesGroup &state,
+=======
+void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
+                    const float voxel_size, const int max_layer,
+                    const std::vector<int> &layer_point_size,
+                    const int max_points_size, const int max_cov_points_size,
+                    const float planer_threshold,
+                    std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map) {
+
+  std::unordered_map<VOXEL_LOC, vector<pointWithCov>> position_index_map;
+  int insert_count = 0, update_count = 0;
+  uint plsize = input_points.size();
+
+
+  double t_update_start = omp_get_wtime();
+  for (uint i = 0; i < plsize; i++) {
+    const pointWithCov p_v = input_points[i];
+    // 计算voxel坐标
+    float loc_xyz[3];
+    for (int j = 0; j < 3; j++) {
+      loc_xyz[j] = p_v.point[j] / voxel_size;
+      if (loc_xyz[j] < 0) {
+        loc_xyz[j] -= 1.0;
+      }
+    }
+    VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1],
+                       (int64_t)loc_xyz[2]);
+    auto iter = feat_map.find(position);
+    // 如果点的位置已经存在voxel 那么就更新点的位置 否则创建新的voxel
+    if (iter != feat_map.end()) {
+      // 更新的点总是很多 先缓存 再延迟并行更新
+      update_count++;
+      position_index_map[position].push_back(p_v);
+    } else {
+      // 插入的点总是少的 直接单线程插入
+      // 保存position位置对应的点
+      insert_count++;
+      OctoTree *octo_tree =
+          new OctoTree(max_layer, 0, layer_point_size, max_points_size,
+                       max_cov_points_size, planer_threshold);
+      feat_map[position] = octo_tree;
+      feat_map[position]->quater_length_ = voxel_size / 4;
+      feat_map[position]->voxel_center_[0] = (0.5 + position.x) * voxel_size;
+      feat_map[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
+      feat_map[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
+      feat_map[position]->UpdateOctoTree(p_v);
+    }
+  }
+  double t_update_end = omp_get_wtime();
+  std::printf("Insert & store time:  %.4fs\n", t_update_end - t_update_start);
+    t_update_start = omp_get_wtime();
+    // 并行延迟更新
+#ifdef MP_EN
+    omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for default(none) shared(position_index_map, feat_map)
+#endif
+    for (size_t b = 0; b < position_index_map.bucket_count(); b++) {
+        // 先遍历bucket 理想情况下bucket一般只有一个元素 这样还是相当于完全并行的遍历position_index_map
+        // XXX 需要确定最坏情况下bucket的元素数量
+        for (auto bi = position_index_map.begin(b); bi != position_index_map.end(b); bi++) {
+            VOXEL_LOC position = bi->first;
+            for (const pointWithCov &p_v:bi->second) {
+                feat_map[position]->UpdateOctoTree(p_v);
+            }
+        }
+    }
+    t_update_end = omp_get_wtime();
+    std::printf("Update:  %.4fs\n", t_update_end - t_update_start);
+
+  std::printf("Insert: %d  Update: %d \n", insert_count, update_count);
+}
+
+void transform_lidar_to_world(const StatesGroup &state,
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
                     const shared_ptr<ImuProcess> &p_imu,
                     const PointCloudXYZI::Ptr &input_cloud,
                     pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud) {
@@ -1071,7 +1145,11 @@ void pubVoxelMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
   }
   cout<<"===========pubVoxelMap[1]=========="<<endl;
   cout<<pub_plane_list.size()<<endl;
+<<<<<<< HEAD
   for (size_t i = 0; i < pub_plane_list.size(); i++) {
+=======
+  for (size_t i = 0; i < pub_plane_list.size() / 20; i++) {
+>>>>>>> 1d861a67b5a7cc9f1335d960b8b6442bcc6ad6a6
     V3D plane_cov = pub_plane_list[i].plane_cov.block<3, 3>(0, 0).diagonal();
     //cout<<"===========pubVoxelMap[1.1]=========="<<endl;
     //cout<<plane_cov<<endl;

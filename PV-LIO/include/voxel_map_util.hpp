@@ -1297,7 +1297,7 @@ void pubVoxelMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
   cout<<"===========pubVoxelMap[1]=========="<<endl;
   cout<<pub_plane_list.size()<<endl;
   
-  for (size_t i = 0; i < pub_plane_list.size() / 10; i++) {
+  for (size_t i = 0; i < pub_plane_list.size() / 50; i++) {
     V3D plane_cov = pub_plane_list[i].plane_cov.block<3, 3>(0, 0).diagonal();
     //cout<<"===========pubVoxelMap[1.1]=========="<<endl;
     //cout<<plane_cov<<endl;
