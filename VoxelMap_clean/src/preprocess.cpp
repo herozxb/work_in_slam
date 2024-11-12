@@ -266,8 +266,6 @@ void Preprocess::oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
 void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
     pl_surf.clear();
-    pl_corn.clear();
-    pl_full.clear();
 
     pcl::PointCloud<velodyne_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
@@ -381,6 +379,8 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
     {
       for (int i = 0; i < plsize; i++)
       {
+      
+        //This code checks if the absolute time of the current point is very close to zero, which might indicate unreliable data.
         // 删除第一排点 因为可能时间戳有问题
         if (std::abs(pl_orig.points[i].time) < 1.0 / SCAN_RATE / 1800){
 //            std::printf("%d\n", i);
@@ -389,6 +389,8 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
         // 还有可能当前帧的点云中出现了不属于这一帧的点 即时间戳超出当前帧采样范围太远 这样的点也要丢弃
         // 否则可能会影响pcl_end_time的计算 这个会给imu propagation的过程的时间戳产生误导
         // 这个问题可能是雷达传输过程中的丢失重传造成的 也可能是雷达内部的bug
+        
+        //This checks if the point's timestamp is too large, which indicates it might belong to a different frame.
         if (std::abs(pl_orig.points[i].time) > (1.0 / SCAN_RATE) * 1.1){
 //            std::printf("PT timestamp out of range: %d    frame ts: %f  point ts: %f\n",
 //                       i, msg->header.stamp.toSec(), pl_orig.points[i].time);
@@ -402,7 +404,7 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
         PointType added_pt;
         // cout<<"!!!!!!"<<i<<" "<<plsize<<endl;
 
-        added_pt.normal_x = pl_orig.points[i].time;
+        added_pt.normal_x = pl_orig.points[i].time;   			//Assigns the time of the original point to added_pt.normal_x to retain timestamp information.
         added_pt.normal_y = 0;
         added_pt.normal_z = 0;
         added_pt.x = pl_orig.points[i].x;
@@ -413,9 +415,14 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         if (!given_offset_time)
         {
+        
+          //Calculates the yaw_angle (in degrees) of added_pt based on its x and y coordinates.
+
           int layer = pl_orig.points[i].ring;
           double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
 
+
+	  //Skips further processing for this first point in the layer (continue).
           if (is_first[layer])
           {
             // printf("layer: %d; is first: %d", layer, is_first[layer]);
@@ -427,6 +434,8 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
               continue;
           }
 
+
+          //For non-first points, calculates the time offset (curvature) relative to the first point’s yaw angle.
           // compute offset time
           if (yaw_angle <= yaw_fp[layer])
           {
@@ -436,6 +445,8 @@ void Preprocess::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
           {
             added_pt.curvature = (yaw_fp[layer]-yaw_angle+360.0) / omega_l;
           }
+
+
 
           if (added_pt.curvature < time_last[layer])  added_pt.curvature+=360.0/omega_l;
 
