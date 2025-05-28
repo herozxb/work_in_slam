@@ -48,6 +48,60 @@
 
 namespace navfn {
 
+  //
+  // function to perform nav fn calculation
+  // keeps track of internal buffers, will be more efficient
+  //   if the size of the environment does not change
+  //
+
+  int
+    create_nav_plan_astar(COSTTYPE *costmap, int nx, int ny,
+        int* goal, int* start,
+        float *plan, int nplan)
+    {
+      static NavFn *nav = NULL;
+
+      if (nav == NULL)
+        nav = new NavFn(nx,ny);
+
+      if (nav->nx != nx || nav->ny != ny) // check for compatibility with previous call
+      {
+        delete nav;
+        nav = new NavFn(nx,ny);      
+      }
+
+      nav->setGoal(goal);
+      nav->setStart(start);
+
+      nav->costarr = costmap;
+      nav->setupNavFn(true);
+
+      // calculate the nav fn and path
+      nav->priInc = 2*COST_NEUTRAL;
+      nav->propNavFnAstar(std::max(nx*ny/20,nx+ny));
+
+      // path
+      int len = nav->calcPath(nplan);
+
+      if (len > 0)			// found plan
+        ROS_DEBUG("[NavFn] Path found, %d steps\n", len);
+      else
+        ROS_DEBUG("[NavFn] No path found\n");
+
+      if (len > 0)
+      {
+        for (int i=0; i<len; i++)
+        {
+          plan[i*2] = nav->pathx[i];
+          plan[i*2+1] = nav->pathy[i];
+        }
+      }
+
+      return len;
+    }
+
+
+
 
   //
   // create nav fn buffers 
@@ -55,8 +109,6 @@ namespace navfn {
 
   NavFn::NavFn(int xs, int ys)
   {  
-    // xs and ys is the size
-    
     // create cell arrays
     costarr = NULL;
     potarr = NULL;
@@ -71,7 +123,9 @@ namespace navfn {
 
     // for Dijkstra (breadth-first), set to COST_NEUTRAL
     // for A* (best-first), set to COST_NEUTRAL
-    priInc = 2*COST_NEUTRAL;	
+    //priInc = 2*COST_NEUTRAL;	
+    
+    priInc = COST_NEUTRAL;	
 
     // goal and start
     goal[0] = goal[1] = 0;
@@ -142,7 +196,6 @@ namespace navfn {
     {
       ROS_DEBUG("[NavFn] Array is %d x %d\n", xs, ys);
 
-      // xs and ys, ns is the size of the Navigation
       nx = xs;
       ny = ys;
       ns = nx*ny;
@@ -160,16 +213,15 @@ namespace navfn {
         delete[] grady;
 
       costarr = new COSTTYPE[ns]; // cost array, 2d config space
-      
       memset(costarr, 0, ns*sizeof(COSTTYPE));
-      
       potarr = new float[ns];	// navigation potential array
       pending = new bool[ns];
-      
       memset(pending, 0, ns*sizeof(bool));
-      
       gradx = new float[ns];
       grady = new float[ns];
+      
+      //std::cout<<"nx="<<nx<<",ny="<<ny<<",ns="<<ns<<std::endl;
+      
     }
 
 
@@ -177,11 +229,13 @@ namespace navfn {
   // set up cost array, usually from ROS
   //
 
-  void   // set cmap to cm, and all the other is COST_OBS 254
+  void
     NavFn::setCostmap(const COSTTYPE *cmap, bool isROS, bool allow_unknown)
     {
-      COSTTYPE *cm = costarr;
+    
+      //std::cout<<"nx="<<nx<<",ny="<<ny<<std::endl;
       
+      COSTTYPE *cm = costarr;
       if (isROS)			// ROS-type cost array
       {
         for (int i=0; i<ny; i++)
@@ -193,15 +247,6 @@ namespace navfn {
             // COST_OBS                 -> COST_OBS (incoming "lethal obstacle")
             // COST_OBS_ROS             -> COST_OBS (incoming "inscribed inflated obstacle")
             // values in range 0 to 252 -> values from COST_NEUTRAL to COST_OBS_ROS.
-            
-            
-            //#define COST_UNKNOWN_ROS 255		// 255 is unknown cost
-	    //#define COST_OBS 254		// 254 for forbidden regions
-	    //#define COST_OBS_ROS 253	// ROS values of 253 are obstacles
-
-	    //#define COST_NEUTRAL 50		// Set this to "open space" value
-	    //#define COST_FACTOR 0.8		// Used for translating costs in NavFn::setCostmap()
-            
             *cm = COST_OBS;
             
             int v = *cmap;
@@ -211,7 +256,7 @@ namespace navfn {
               v = COST_NEUTRAL+COST_FACTOR*v;
               
               if (v >= COST_OBS) // Ensures the transformed value does not exceed COST_OBS (the obstacle value).
-                v = COST_OBS-1;  // v = 253
+                v = COST_OBS-1;
                 
               *cm = v;
               
@@ -224,6 +269,7 @@ namespace navfn {
           }
         }
       }
+
       else				// not a ROS map, just a PGM
       {
         for (int i=0; i<ny; i++)
@@ -234,8 +280,8 @@ namespace navfn {
           
             *cm = COST_OBS;
             
-            if (i<7 || i > ny-8 || j<7 || j > nx-8)  // don't do borders
-              continue;	
+            if (i<7 || i > ny-8 || j<7 || j > nx-8)
+              continue;	// don't do borders
               
             int v = *cmap;
             
@@ -322,17 +368,25 @@ namespace navfn {
   float *NavFn::getPathY() { return pathy; }
   int    NavFn::getPathLen() { return npath; }
 
-  // Current bucket (curP) holds all cells whose f–score is below that cutoff.
-
-  // Overflow bucket (overP) holds all cells whose f–score is at or above that cutoff.
-
   // inserting onto the priority blocks
 #define push_cur(n)  { if (n>=0 && n<ns && !pending[n] && \
     costarr[n]<COST_OBS && curPe<PRIORITYBUFSIZE) \
   { curP[curPe++]=n; pending[n]=true; }}
-#define push_next(n) { if (n>=0 && n<ns && !pending[n] && \
-    costarr[n]<COST_OBS && nextPe<PRIORITYBUFSIZE) \
-  { nextP[nextPe++]=n; pending[n]=true; }}
+  
+// nextP is what to update next  
+// inserting onto the priority blocks, while (i-- > 0) updateCell(*pb++);
+#define push_next(n) {                                          \
+  if (                                                          \
+      /* 1) index in bounds */  (n)>=0 && (n)<ns                \
+   && /* 2) not already queued */      !pending[n]              \
+   && /* 3) not an obstacle */          costarr[n]<COST_OBS     \
+   && /* 4) buffer not full */          nextPe<PRIORITYBUFSIZE  \
+  ) {                                                           \
+    nextP[nextPe++] = n;    /* store n into the nextP array */  \
+    pending[n]    = true;   /* remember we’ve queued it */      \
+  }                                                             \
+}
+
 #define push_over(n) { if (n>=0 && n<ns && !pending[n] && \
     costarr[n]<COST_OBS && overPe<PRIORITYBUFSIZE) \
   { overP[overPe++]=n; pending[n]=true; }}
@@ -343,7 +397,6 @@ namespace navfn {
   void
     NavFn::setupNavFn(bool keepit)
     {
-      // #define POT_HIGH 1.0e10		// unassigned cell potential
       // reset values in propagation arrays
       for (int i=0; i<ns; i++)
       {
@@ -352,23 +405,18 @@ namespace navfn {
         gradx[i] = grady[i] = 0.0;
       }
 
-      // #define COSTTYPE unsigned char	// Whatever is used...
       // outer bounds of cost array
       COSTTYPE *pc;
       pc = costarr;
-      
       for (int i=0; i<nx; i++)
         *pc++ = COST_OBS;
       pc = costarr + (ny-1)*nx;
-      
       for (int i=0; i<nx; i++)
         *pc++ = COST_OBS;
       pc = costarr;
-      
       for (int i=0; i<ny; i++, pc+=nx)
         *pc = COST_OBS;
       pc = costarr + nx - 1;
-      
       for (int i=0; i<ny; i++, pc+=nx)
         *pc = COST_OBS;
 
@@ -394,7 +442,7 @@ namespace navfn {
         if (*pc >= COST_OBS)
           ntot++;			// number of cells that are obstacles
       }
-      nobs = ntot;			// number of cells that are obstacles
+      nobs = ntot;
     }
 
 
@@ -421,9 +469,11 @@ namespace navfn {
 
 #define INVSQRT2 0.707106781
 
-  inline void // udpate cell at n (x,y)
+  //so above code it to update the i cell to a lower potential value
+  inline void
     NavFn::updateCell(int n)
     {
+      // 1) Fetch your four neighbors’ potentials
       // get neighbors
       float u,d,l,r;
       l = potarr[n-1];
@@ -434,15 +484,20 @@ namespace navfn {
       //	 potarr[n], l, r, u, d);
       //  ROS_INFO("[Update] cost: %d\n", costarr[n]);
 
+
+      // 2) Pick the two smallest: ta = min(up,down), tc = min(left,right)
       // find lowest, and its lowest neighbor
       float ta, tc;
-      if (l<r) tc=l; else tc=r;   // if left < right, tc = left
+      if (l<r) tc=l; else tc=r;
       if (u<d) ta=u; else ta=d;
 
       // do planar wave update
       if (costarr[n] < COST_OBS)	// don't propagate into obstacles
       {
-        float hf = (float)costarr[n]; // traversability factor // hf is cost
+      
+        // Ensure tc ≥ ta   ⇔   |ta - tc| = tc - ta
+        // 3) hf is your local “slowness” = costarr[n]
+        float hf = (float)costarr[n]; // traversability factor
         float dc = tc-ta;		// relative cost between ta,tc
         if (dc < 0) 		// ta is lowest
         {
@@ -451,42 +506,65 @@ namespace navfn {
         }
 
         // calculate new potential
-        float pot;
+        float newpot;
         if (dc >= hf)		// if too large, use ta-only update
-          pot = ta+hf;
+        {
+	  // If neighbor gap is big, solution degenerates to single-neighbor
+          //   φ = min(a,b) + h
+          newpot = ta+hf;
+        }
         else			// two-neighbor interpolation update
         {
+        
+          // Otherwise solve full two-neighbor case:
+          //   φ = (ta + tc + sqrt(2h^2 - dc^2)) / 2
+          //
+          // Instead of a costly sqrt we use a little quadratic approx
+          //   v ≈ (φ − ta)/h  as a function of d/h:
+    
           // use quadratic approximation
           // might speed this up through table lookup, but still have to 
           //   do the divide
-          float d = dc/hf;
-          float v = -0.2301*d*d + 0.5307*d + 0.7040;
-          pot = ta + hf*v;
+          
+          //  “find where the diagonal x=y hits the circle centered at (a,b) of radius h.”
+          float d = dc/hf;	// d = |a−b|/h in [0,1]
+          float v = -0.2301*d*d + 0.5307*d + 0.7040;  // fit to (1 + sqrt(1 - d^2))/2
+          newpot = ta + hf*v;
         }
 
         //      ROS_INFO("[Update] new pot: %d\n", costarr[n]);
 
         // now add affected neighbors to priority blocks
-        if (pot < potarr[n])
+        if (newpot < potarr[n])
         {
+          // For each neighbor m at index (n±1 or n±nx):
+          //   if its current potarr[m] > newpot + moveCost, then
+          //     enqueue m for re‐processing
+          
+          // approximate diagonal move cost to each neighbor
           float le = INVSQRT2*(float)costarr[n-1];
           float re = INVSQRT2*(float)costarr[n+1];
           float ue = INVSQRT2*(float)costarr[n-nx];
           float de = INVSQRT2*(float)costarr[n+nx];
-          potarr[n] = pot;					// inserting onto the priority blocks
-          if (pot < curT)	// low-cost buffer block 
+          potarr[n] = newpot;
+          
+          
+          // Then it re‐queues each neighbor whose old potential is still higher than what you could give it via n (i.e. oldNeighborPot > newpot + moveCost) into the appropriate bucket (push_next or push_over).
+          // That way, every time any cell’s potential drops, its neighbors get another chance to drop too—so the lower‐and‐lower front ripples outward until the whole field converges.
+
+          if (newpot < curT)	// low-cost buffer block 
           {
-            if (l > pot+le) push_next(n-1);			// nextP[nextPe++]=n; pending[n]=true; 
-            if (r > pot+re) push_next(n+1);
-            if (u > pot+ue) push_next(n-nx);
-            if (d > pot+de) push_next(n+nx);
+            if (l > newpot+le) push_next(n-1); // if (l > newpot+le) checks whether the left neighbor’s old potential l = potarr[n-1] is higher than the best you can offer it now (newpot + le). If so, that neighbor needs re‐processing.
+            if (r > newpot+re) push_next(n+1);
+            if (u > newpot+ue) push_next(n-nx);
+            if (d > newpot+de) push_next(n+nx);
           }
           else			// overflow block
           {
-            if (l > pot+le) push_over(n-1);			// overP[overPe++]=n; pending[n]=true;
-            if (r > pot+re) push_over(n+1);
-            if (u > pot+ue) push_over(n-nx);
-            if (d > pot+de) push_over(n+nx);
+            if (l > newpot+le) push_over(n-1);
+            if (r > newpot+re) push_over(n+1);
+            if (u > newpot+ue) push_over(n-nx);
+            if (d > newpot+de) push_over(n+nx);
           }
         }
 
@@ -627,10 +705,15 @@ namespace navfn {
           pending[*(pb++)] = false;
 
         // process current priority buffer
-        pb = curP; // pb now points to the start of your current bucket array
-        i = curPe; // curPe is the number of cells in that bucket
+        
+        std::cout<<"cycles="<<cycles<<",curPe="<<curPe<<",curT="<<curT<<std::endl;
+        
+        
+        // nextP is what to update next
+        pb = curP; 
+        i = curPe;
         while (i-- > 0)		
-          updateCell(*pb++); // take the next cell index // advance to the next entry in curP[] // relax that cell, potentially enqueueing its neighbors
+          updateCell(*pb++);
 
         if (displayInt > 0 &&  (cycle % displayInt) == 0)
           displayFn(this);
@@ -735,6 +818,8 @@ namespace navfn {
           overP = pb;
         }
 
+
+
         // check if we've hit the Start cell
         if (potarr[startCell] < POT_HIGH)
           break;
@@ -769,13 +854,13 @@ namespace navfn {
   //  3. Surrounded by high potentials
   //
 
-  int // by gradient
+  int
     NavFn::calcPath(int n, int *st)
     {
       // test write
       //savemap("test");
 
-      // check path arrays
+      // check path arrays length
       if (npathbuf < n)
       {
         if (pathx) delete [] pathx;
@@ -788,6 +873,8 @@ namespace navfn {
       // set up start position at cell
       // st is always upper left corner for 4-point bilinear interpolation 
       if (st == NULL) st = start;
+      
+      //stc is current position in 1D, as 2D
       int stc = st[1]*nx + st[0];
 
       // set up offset
@@ -799,7 +886,8 @@ namespace navfn {
       for (int i=0; i<n; i++)
       {
         // check if near goal
-        int nearest_point=std::max(0,std::min(nx*ny-1,stc+(int)round(dx)+(int)(nx*round(dy))));
+        int nearest_point=std::max(0, std::min( nx*ny-1, stc + (int)round(dx) + (int)(nx*round(dy) ) ) );
+        
         if (potarr[nearest_point] < COST_NEUTRAL)
         {
           pathx[npath] = (float)goal[0];
@@ -819,6 +907,7 @@ namespace navfn {
         npath++;
 
         bool oscillation_detected = false;
+        
         if( npath > 2 &&
             pathx[npath-1] == pathx[npath-3] &&
             pathy[npath-1] == pathy[npath-3] )

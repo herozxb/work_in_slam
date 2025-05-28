@@ -82,8 +82,6 @@ namespace carrot_planner {
       
 
       ros::NodeHandle private_nh("~/" + name);
-      private_nh.param("step_size", step_size_, costmap_->getResolution());
-      private_nh.param("min_dist_from_robot", min_dist_from_robot_, 0.10);
       world_model_ = new base_local_planner::CostmapModel(*costmap_); 
 
       if(visualize_potential_)
@@ -127,7 +125,7 @@ namespace carrot_planner {
     costmap_ = costmap_ros_->getCostmap();
     std::string global_frame_ = costmap_ros_->getGlobalFrameID();
     bool allow_unknown_ = true;
-    double tolerance = 0.01;
+    double tolerance = 0.5;
 
     //until tf can handle transforming things that are way in the past... we'll require the goal to be in our global frame
     if(goal.header.frame_id != global_frame_){
