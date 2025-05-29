@@ -118,14 +118,16 @@ namespace carrot_planner {
       return false;
     }
 
-    ROS_DEBUG("Got a start: %.2f, %.2f, and a goal: %.2f, %.2f", start.pose.position.x, start.pose.position.y, goal.pose.position.x, goal.pose.position.y);
-
-    plan.clear();
     
     costmap_ = costmap_ros_->getCostmap();
     std::string global_frame_ = costmap_ros_->getGlobalFrameID();
     bool allow_unknown_ = true;
     double tolerance = 0.5;
+
+    ROS_DEBUG("Got a start: %.2f, %.2f, and a goal: %.2f, %.2f", start.pose.position.x, start.pose.position.y, goal.pose.position.x, goal.pose.position.y);
+
+    plan.clear();
+
 
     //until tf can handle transforming things that are way in the past... we'll require the goal to be in our global frame
     if(goal.header.frame_id != global_frame_){
@@ -175,6 +177,7 @@ namespace carrot_planner {
     map_goal[0] = map_x;
     map_goal[1] = map_y;
 
+    //Why your goal looks “upside down”
     planner_->setStart(map_goal);
     planner_->setGoal(map_start);
 
@@ -252,16 +255,23 @@ namespace carrot_planner {
       PotarrPoint pt;
       float *pp = planner_->potarr;
       double pot_x, pot_y;
+      
+      //std::cout<<costmap_->getOriginX()<<costmap_->getOriginY()<<costmap_->getResolution()<<std::endl;
+      
       for (unsigned int i = 0; i < (unsigned int)planner_->ny*planner_->nx ; i++)
       {
         if (pp[i] < 10e7)
         {
-          pot_x = costmap_->getOriginX() + (i%planner_->nx) * costmap_->getResolution();
-          pot_y = costmap_->getOriginY() + (i/planner_->nx) * costmap_->getResolution();
+          //pot_x = costmap_->getOriginX() + (i%planner_->nx) * costmap_->getResolution();
+          //pot_y = costmap_->getOriginY() + (i/planner_->nx) * costmap_->getResolution();
+
+          pot_x = -20 + (i%planner_->nx) * 0.05;
+          pot_y = -20 + (i/planner_->nx) * 0.05;
           
+          //std::cout<< i<<","<< pp[i] <<std::endl;
           iter_x[0] = pot_x;
           iter_x[1] = pot_y;
-          iter_x[2] = pp[i]/pp[planner_->start[1]*planner_->nx + planner_->start[0]]*20;
+          iter_x[2] = pp[i] / pp[ planner_->start[1]*planner_->nx + planner_->start[0] ] * 20;
           iter_x[3] = pp[i];
           ++iter_x;
         }
@@ -338,8 +348,13 @@ namespace carrot_planner {
     for(int i = len - 1; i >= 0; --i){
       //convert the plan to world coordinates
       double world_x, world_y;
-      world_x = costmap_->getOriginX() + x[i] * costmap_->getResolution();
-      world_y = costmap_->getOriginY() + y[i] * costmap_->getResolution();
+      
+      //world_x = costmap_->getOriginX() + x[i] * costmap_->getResolution();
+      //world_y = costmap_->getOriginY() + y[i] * costmap_->getResolution();
+      
+      world_x = -20 + x[i] * 0.05;
+      world_y = -20 + y[i] * 0.05;     
+      
       geometry_msgs::PoseStamped pose;
       pose.header.stamp = plan_time;
       pose.header.frame_id = global_frame_;
