@@ -47,6 +47,11 @@
 #include <costmap_2d/costmap_2d.h>
 #include <sensor_msgs/point_cloud2_iterator.h>
 
+#include <iostream>
+
+
+using namespace std;
+
 using namespace navfn;
 
 //register this planner as a BaseGlobalPlanner plugin
@@ -54,61 +59,75 @@ PLUGINLIB_EXPORT_CLASS(carrot_planner::CarrotPlanner, nav_core::BaseGlobalPlanne
 
 namespace carrot_planner {
 
-  CarrotPlanner::CarrotPlanner()
-  : costmap_ros_(NULL), costmap_(NULL), world_model_(NULL), initialized_(false), visualize_potential_(false){}
-
-  CarrotPlanner::CarrotPlanner(std::string name, costmap_2d::Costmap2DROS* costmap_ros)
-  : costmap_ros_(NULL), costmap_(NULL), world_model_(NULL), initialized_(false){
-    initialize(name, costmap_ros);
+  CarrotPlanner::CarrotPlanner() : costmap_ros_(NULL), costmap_(NULL),  planner_(), initialized_(false), visualize_potential_(false), allow_unknown_(true)
+  {
+  
   }
+
+  CarrotPlanner::CarrotPlanner(std::string name, costmap_2d::Costmap2DROS* costmap_ros) : costmap_ros_(NULL), costmap_(NULL), planner_(), initialized_(false), visualize_potential_(false), allow_unknown_(true)
+  {
+     initialize(name, costmap_ros);
+  }
+
+  CarrotPlanner::CarrotPlanner(std::string name, costmap_2d::Costmap2D* costmap, std::string global_frame)
+    : costmap_ros_(NULL), costmap_(NULL),  planner_(), initialized_(false), visualize_potential_(false), allow_unknown_(true) {
+      //initialize the planner
+      initialize(name, costmap, global_frame);
+  }
+
 
   CarrotPlanner::~CarrotPlanner() {
-    // deleting a nullptr is a noop
-    delete world_model_;
+
   }
-  
+
   void CarrotPlanner::initialize(std::string name, costmap_2d::Costmap2DROS* costmap_ros){
+    costmap_ros_ = costmap_ros;
+    initialize(name, costmap_ros->getCostmap(), costmap_ros->getGlobalFrameID());
+  }
+
+
+  void CarrotPlanner::initialize(std::string name, costmap_2d::Costmap2D* costmap, std::string global_frame)
+  {
   
-    
+
     visualize_potential_ = true;
+
+    if(!initialized_)
+    {
     
-    if(!initialized_){
-      costmap_ros_ = costmap_ros;
-      costmap_ = costmap_ros_->getCostmap();
+      //cout<<"==============1=============="<<endl;
+      costmap_ = costmap;
+
+      //costmap_ros_ = costmap_ros;
+      //costmap_ = costmap_ros_->getCostmap();
+
+      global_frame_ = global_frame;
       
+      //cout<<"==============2=============="<<endl;
       planner_ = boost::shared_ptr<NavFn>(new NavFn(costmap_->getSizeInCellsX(), costmap_->getSizeInCellsY()));
 
-      
-      
-
       ros::NodeHandle private_nh("~/" + name);
-      world_model_ = new base_local_planner::CostmapModel(*costmap_); 
 
+      //cout<<"==============3=============="<<endl;
+      plan_pub_ = private_nh.advertise<nav_msgs::Path>("plan", 1);
+      //if we're going to visualize the potential array we need to advertise
       if(visualize_potential_)
         potarr_pub_ = private_nh.advertise<sensor_msgs::PointCloud2>("potential", 1);
 
+
+      //cout<<"==============4=============="<<endl;
       initialized_ = true;
+
     }
     else
-      ROS_WARN("This planner has already been initialized... doing nothing");
-  }
-
-  //we need to take the footprint of the robot into account when we calculate cost to obstacles
-  double CarrotPlanner::footprintCost(double x_i, double y_i, double theta_i){
-    if(!initialized_){
-      ROS_ERROR("The planner has not been initialized, please call initialize() to use the planner");
-      return -1.0;
+    {
+      ROS_WARN("This planner has already been initialized, you can't call it twice, doing nothing");
     }
 
-    std::vector<geometry_msgs::Point> footprint = costmap_ros_->getRobotFootprint();
-    //if we have no footprint... do nothing
-    if(footprint.size() < 3)
-      return -1.0;
-
-    //check if the footprint is legal
-    double footprint_cost = world_model_->footprintCost(x_i, y_i, theta_i, footprint);
-    return footprint_cost;
   }
+  
+
+
 
 
   bool CarrotPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& plan){
@@ -279,8 +298,38 @@ namespace carrot_planner {
       potarr_pub_.publish(cloud);
     }
     
+    //publish the plan for visualization purposes
+    publishPlan(plan, 1.0, 0.0, 0.0, 0.0);
     
     return !plan.empty();
+  }
+
+
+  void CarrotPlanner::publishPlan(const std::vector<geometry_msgs::PoseStamped>& path, double r, double g, double b, double a){
+    if(!initialized_){
+      ROS_ERROR("This planner has not been initialized yet, but it is being used, please call initialize() before use");
+      return;
+    }
+
+    //create a message for the plan 
+    nav_msgs::Path gui_path;
+    gui_path.poses.resize(path.size());
+    
+    if(path.empty()) {
+      //still set a valid frame so visualization won't hit transform issues
+    	gui_path.header.frame_id = global_frame_;
+      gui_path.header.stamp = ros::Time::now();
+    } else { 
+      gui_path.header.frame_id = path[0].header.frame_id;
+      gui_path.header.stamp = path[0].header.stamp;
+    }
+
+    // Extract the plan in world co-ordinates, we assume the path is all in the same frame
+    for(unsigned int i=0; i < path.size(); i++){
+      gui_path.poses[i] = path[i];
+    }
+
+    plan_pub_.publish(gui_path);
   }
 
 
@@ -368,6 +417,9 @@ namespace carrot_planner {
       plan.push_back(pose);
     }
 
+    //publish the plan for visualization purposes
+    publishPlan(plan, 0.0, 1.0, 0.0, 0.0);
+    
     return !plan.empty();
   }
 
