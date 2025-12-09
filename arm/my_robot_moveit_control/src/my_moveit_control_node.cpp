@@ -197,12 +197,22 @@ int main(int argc, char** argv)
   move_group_interface.setPoseTarget(target_pose1);
 
 
+  moveit::planning_interface::MoveGroupInterface::Plan my_plan;
+
+  bool success = (move_group_interface.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
+
+  ROS_INFO_NAMED("tutorial", "Visualizing plan 1 (pose goal) %s", success ? "" : "FAILED");
+
+
 
   // Directly use the IK solver without planning
   std::vector<double> joint_values;
 
   // Get the current robot state (this will be used by the IK solver)
   moveit::core::RobotStatePtr current_state = move_group_interface.getCurrentState();
+
+
+
 
 
   // Solve the inverse kinematics directly for the target pose
